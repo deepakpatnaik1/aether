@@ -38,4 +38,11 @@ struct ChatMessage: Identifiable, Codable {
         self.author = author
         self.timestamp = Date()
     }
+    
+    init(id: UUID, content: String, author: String, timestamp: Date) {
+        self.id = id
+        self.content = content
+        self.author = author
+        self.timestamp = timestamp
+    }
 }

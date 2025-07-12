@@ -90,4 +90,81 @@ class OpenAIService: ObservableObject, LLMServiceProtocol {
         
         return content
     }
+    
+    func streamMessage(_ message: String) async throws -> AsyncStream<String> {
+        guard let (provider, model) = getProviderConfig() else {
+            throw LLMServiceError.missingAPIKey("OpenAI configuration not loaded")
+        }
+        
+        let apiKey = configuration.getApiKey(for: "openai")
+        guard !apiKey.isEmpty else {
+            throw LLMServiceError.missingAPIKey("OpenAI API key not configured")
+        }
+        
+        return AsyncStream(String.self) { continuation in
+            Task {
+                do {
+                    await MainActor.run {
+                        isLoading = true
+                        errorMessage = nil
+                    }
+                    
+                    let url = URL(string: "\(provider.baseURL)/chat/completions")!
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    
+                    let requestBody: [String: Any] = [
+                        "model": model.id,
+                        "messages": [
+                            ["role": "user", "content": message]
+                        ],
+                        "max_tokens": model.maxTokens,
+                        "temperature": model.temperature,
+                        "stream": true
+                    ]
+                    
+                    request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+                    
+                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw LLMServiceError.invalidResponse
+                    }
+                    
+                    guard httpResponse.statusCode == 200 else {
+                        throw LLMServiceError.httpError(httpResponse.statusCode)
+                    }
+                    
+                    for try await line in bytes.lines {
+                        if line.hasPrefix("data: ") {
+                            let data = String(line.dropFirst(6))
+                            if data == "[DONE]" {
+                                break
+                            }
+                            
+                            if let jsonData = data.data(using: .utf8),
+                               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                               let choices = json["choices"] as? [[String: Any]],
+                               let firstChoice = choices.first,
+                               let delta = firstChoice["delta"] as? [String: Any],
+                               let content = delta["content"] as? String {
+                                continuation.yield(content)
+                            }
+                        }
+                    }
+                    
+                    continuation.finish()
+                    
+                } catch {
+                    continuation.finish()
+                }
+                
+                await MainActor.run {
+                    isLoading = false
+                }
+            }
+        }
+    }
 }

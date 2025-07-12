@@ -46,12 +46,12 @@
   "routing": {
     "priority": [
       {
-        "provider": "fireworks",
-        "model": "llama-maverick"
-      },
-      {
         "provider": "openai", 
         "model": "gpt-4o"
+      },
+      {
+        "provider": "fireworks",
+        "model": "llama-maverick"
       }
     ],
     "fallbackBehavior": "cascade"

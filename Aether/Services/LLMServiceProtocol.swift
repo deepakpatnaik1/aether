@@ -29,4 +29,5 @@ protocol LLMServiceProtocol: ObservableObject {
     var errorMessage: String? { get }
     
     func sendMessage(_ message: String) async throws -> String
+    func streamMessage(_ message: String) async throws -> AsyncStream<String>
 }

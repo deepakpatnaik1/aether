@@ -34,6 +34,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var threePaneManager = ThreePaneManager()
     @StateObject private var keyboardHandler: KeyboardHandler
+    @StateObject private var messageStore = MessageStore()
     
     init() {
         let manager = ThreePaneManager()
@@ -94,6 +95,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .environmentObject(messageStore)
         .background(
             Color(
                 red: DesignTokens.shared.background.primary.red,

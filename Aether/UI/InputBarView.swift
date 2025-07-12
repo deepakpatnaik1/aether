@@ -12,6 +12,7 @@ struct InputBarView: View {
     @State private var inputText: String = ""
     @State private var textHeight: CGFloat
     @FocusState private var isInputFocused: Bool
+    @EnvironmentObject var messageStore: MessageStore
     
     private let tokens = DesignTokens.shared
     
@@ -159,11 +160,18 @@ struct InputBarView: View {
     private func sendMessage() {
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
-        // TODO: Implement message sending
-        print("Sending message: \(inputText)")
+        let messageToSend = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Clear input
+        // Clear input immediately for responsive feel
         inputText = ""
+        
+        // Snap back to compact state
+        withAnimation(.easeInOut(duration: 0.2)) {
+            textHeight = tokens.elements.inputBar.minHeight
+        }
+        
+        // Send message to MessageStore for processing
+        messageStore.sendMessage(messageToSend)
     }
     
     private func handleTextChange(oldValue: String, newValue: String) {

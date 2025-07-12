@@ -20,19 +20,22 @@
 import SwiftUI
 
 struct ScrollbackView: View {
-    @State private var messages: [ChatMessage] = []
+    @EnvironmentObject var messageStore: MessageStore
     
     private let tokens = DesignTokens.shared
     
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: tokens.elements.scrollback["messageSpacing"] ?? 12) {
-                ForEach(messages) { message in
+                ForEach(messageStore.messages) { message in
                     MessageBubbleView(message: message)
                 }
             }
             .padding(.horizontal, tokens.layout.padding["scrollback"] ?? 20)
             .padding(.top, tokens.layout.padding["top"] ?? 20)
+        }
+        .onAppear {
+            print("📱 ScrollbackView appeared with \(messageStore.messages.count) messages")
         }
     }
 }

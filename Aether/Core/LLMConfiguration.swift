@@ -95,6 +95,58 @@ class LLMConfiguration: ObservableObject {
     
     func getApiKey(for provider: String) -> String {
         guard let providerConfig = getProvider(provider) else { return "" }
-        return ProcessInfo.processInfo.environment[providerConfig.apiKeyEnvVar] ?? ""
+        
+        // First try environment variables
+        if let envKey = ProcessInfo.processInfo.environment[providerConfig.apiKeyEnvVar], !envKey.isEmpty {
+            return envKey
+        }
+        
+        // Fallback: try to load from .env file
+        return loadFromEnvFile(key: providerConfig.apiKeyEnvVar)
+    }
+    
+    private func loadFromEnvFile(key: String) -> String {
+        // Try to find .env file in app bundle first (most reliable for sandboxed apps)
+        if let bundlePath = Bundle.main.path(forResource: ".env", ofType: nil) {
+            print("🔍 Trying .env file in app bundle: \(bundlePath)")
+            if let envContent = try? String(contentsOfFile: bundlePath, encoding: .utf8) {
+                print("✅ Found .env file in app bundle")
+                return parseEnvContent(envContent, key: key)
+            }
+        }
+        
+        // Fallback: try external locations (may not work in sandboxed apps)
+        let fallbackPaths = [
+            "/Users/d.patnaik/code/Aether/.env",
+            FileManager.default.currentDirectoryPath + "/.env"
+        ]
+        
+        for envPath in fallbackPaths {
+            print("🔍 Trying .env file at: \(envPath)")
+            if let envContent = try? String(contentsOfFile: envPath, encoding: .utf8) {
+                print("✅ Found .env file at: \(envPath)")
+                return parseEnvContent(envContent, key: key)
+            }
+        }
+        
+        print("❌ Could not find .env file in any location")
+        print("💡 To fix: Add .env file to Xcode project as a bundle resource")
+        return ""
+    }
+    
+    private func parseEnvContent(_ envContent: String, key: String) -> String {
+        // Parse .env file for the key
+        for line in envContent.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix(key + "=") {
+                let value = String(trimmed.dropFirst(key.count + 1))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                print("✅ Found \(key) in .env file")
+                return value
+            }
+        }
+        
+        print("❌ Key \(key) not found in .env file")
+        return ""
     }
 }
