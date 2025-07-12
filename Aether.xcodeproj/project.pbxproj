@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		BD5261842E22460100647D87 /* Aether.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Aether.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD52621E2E22690B00647D87 /* Aether.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = Aether.xcodeproj; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -41,6 +42,13 @@
 			isa = PBXGroup;
 			children = (
 				BD5261842E22460100647D87 /* Aether.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		BD5262242E22690B00647D87 /* Products */ = {
+			isa = PBXGroup;
+			children = (
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -97,6 +105,12 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BD5261852E22460100647D87 /* Products */;
 			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = BD5262242E22690B00647D87 /* Products */;
+					ProjectRef = BD52621E2E22690B00647D87 /* Aether.xcodeproj */;
+				},
+			);
 			projectRoot = "";
 			targets = (
 				BD5261832E22460100647D87 /* Aether */,

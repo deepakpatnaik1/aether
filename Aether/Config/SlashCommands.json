@@ -1,0 +1,10 @@
+{
+  "commands": [
+    {
+      "command": "/model",
+      "type": "dropdown",
+      "options": ["fireworks", "claude", "openai", "llama3"],
+      "description": "Switch LLM model"
+    }
+  ]
+}
