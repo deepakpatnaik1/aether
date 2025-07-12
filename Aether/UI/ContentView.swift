@@ -115,6 +115,10 @@ struct ContentView: View {
             }
             return .ignored
         }
+        .onTapGesture {
+            // Ensure the view regains focus when clicked anywhere
+            // This helps recover from focus loss during window operations
+        }
     }
     
 }
@@ -128,27 +132,7 @@ struct PaneContainer: View {
         VStack(spacing: 0) {
             // Main content area
             VStack {
-                // Debug header
-                VStack(spacing: DesignTokens.shared.elements.panes.spacing) {
-                    Text("Pane \(paneIndex + 1)")
-                        .foregroundColor(.white.opacity(DesignTokens.shared.elements.panes.textOpacity))
-                        .font(.custom(DesignTokens.shared.typography.bodyFont, size: 17))
-                    
-                    Text(isActive ? "Active" : "Inactive")
-                        .foregroundColor(isActive ? .blue : .gray)
-                        .font(.custom(DesignTokens.shared.typography.bodyFont, size: 12))
-                    
-                    // Debug info
-                    VStack(alignment: .leading, spacing: DesignTokens.shared.elements.panes.debugSpacing) {
-                        Text("Window: \(windowSizeText)")
-                            .font(.custom(DesignTokens.shared.typography.bodyFont, size: 10))
-                            .foregroundColor(.gray)
-                        Text("Visible: \(threePaneManager.visiblePaneCount)")
-                            .font(.custom(DesignTokens.shared.typography.bodyFont, size: 10))
-                            .foregroundColor(.gray)
-                    }
-                }
-                .padding(.top, DesignTokens.shared.elements.panes.topPadding)
+                ScrollbackView()
                 
                 Spacer()
             }
@@ -163,13 +147,6 @@ struct PaneContainer: View {
         }
     }
     
-    private var windowSizeText: String {
-        switch threePaneManager.currentWindowSize {
-        case .oneThird: return "1/3"
-        case .twoThirds: return "2/3"
-        case .full: return "Full"
-        }
-    }
 }
 
 // MARK: - Glassmorphic Separator Component

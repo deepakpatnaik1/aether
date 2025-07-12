@@ -8,9 +8,15 @@
 import SwiftUI
 
 struct MessageBubbleView: View {
+    let message: ChatMessage
+    
     var body: some View {
-        VStack {
-            // TODO: Implement MessageBubbleView
+        VStack(alignment: .leading) {
+            Text(message.author)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            MarkdownRenderer(content: message.content)
+                .padding()
         }
     }
 }

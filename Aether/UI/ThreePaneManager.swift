@@ -126,6 +126,9 @@ class ThreePaneManager: ObservableObject {
             
             // Resize window immediately (with its own animation)
             self.resizeWindow()
+            
+            // Ensure app stays focused during pane transitions
+            self.maintainAppFocus()
         }
     }
     
@@ -159,6 +162,32 @@ class ThreePaneManager: ObservableObject {
         )
         
         window.setFrame(newFrame, display: true, animate: true)
+        
+        // Ensure window maintains focus after resize to prevent keyboard shortcut loss
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+    
+    // MARK: - Focus Management
+    //
+    // FOCUS BUG FIX: Window Resize Focus Loss Prevention
+    // ================================================
+    //
+    // PROBLEM: During pane transitions, window.setFrame() can cause the app to lose focus,
+    // making keyboard shortcuts (Ctrl+§) stop working until user clicks back into the app.
+    //
+    // SOLUTION: Dual-layer focus restoration:
+    // 1. maintainAppFocus() - Ensures app stays active during transitions
+    // 2. window.makeKeyAndOrderFront() - Ensures window retains key status after resize
+    //
+    // TIMING: Small delays prevent focus commands from being ignored during animation
+    
+    private func maintainAppFocus() {
+        // Ensure the app stays active and focused during transitions
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
     
     // MARK: - Pane Management
