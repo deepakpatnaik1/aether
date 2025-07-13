@@ -2,22 +2,36 @@
 //  InputBarView.swift
 //  Aether
 //
-//  Glassmorphic input bar with auto-focus and spring physics
+//  Clean glassmorphic input bar focused on UI presentation
 //
+//  BLUEPRINT SECTION: 🚨 UI - InputBarView
+//  =====================================
+//
+//  DESIGN PRINCIPLES:
+//  - Separation of Concerns: Pure UI component, business logic in services
+//  - Single Responsibility: Handles only input presentation and user interaction
+//  - Service Integration: Uses FocusManager and TextMeasurementService
+//
+//  RESPONSIBILITIES:
+//  - Render glassmorphic input interface
+//  - Handle user text input events
+//  - Coordinate with focus and measurement services
+//  - Provide clean input experience
 
 import SwiftUI
-import AppKit
+import Combine
 
 struct InputBarView: View {
     @State private var inputText: String = ""
     @State private var textHeight: CGFloat
     @FocusState private var isInputFocused: Bool
     @EnvironmentObject var messageStore: MessageStore
+    @EnvironmentObject var focusManager: FocusManager
     
     private let tokens = DesignTokens.shared
     
     init() {
-        _textHeight = State(initialValue: tokens.elements.inputBar.defaultTextHeight)
+        _textHeight = State(initialValue: DesignTokens.shared.elements.inputBar.defaultTextHeight)
     }
     
     var body: some View {
@@ -49,7 +63,6 @@ struct InputBarView: View {
                             sendMessage()
                             return .handled
                         }
-                        // Let Enter create new lines (default TextEditor behavior)
                         return .ignored
                     }
             }
@@ -57,11 +70,11 @@ struct InputBarView: View {
                 handleTextChange(oldValue: oldValue, newValue: newValue)
             }
             
-            // Bottom controls row - seamlessly connected
+            // Bottom controls row
             HStack(spacing: tokens.elements.inputBar.controlsSpacing) {
                 // Plus button
                 Button(action: {
-                    // TODO: Add attachment functionality
+                    focusManager.requestInputFocus()
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
@@ -72,10 +85,11 @@ struct InputBarView: View {
                 
                 Spacer()
                 
-                // Send button (appears when text is entered)
+                // Send button
                 if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: {
                         sendMessage()
+                        focusManager.requestInputFocus()
                     }) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: tokens.elements.buttons.sendSize, weight: .medium))
@@ -84,7 +98,7 @@ struct InputBarView: View {
                     .buttonStyle(PlainButtonStyle())
                 }
                 
-                // Green glowing indicator
+                // Green indicator
                 Circle()
                     .fill(Color.green)
                     .frame(width: tokens.elements.buttons.indicatorSize, height: tokens.elements.buttons.indicatorSize)
@@ -117,43 +131,33 @@ struct InputBarView: View {
                     radius: tokens.glassmorphic.shadows.innerGlow.radius,
                     x: tokens.glassmorphic.shadows.innerGlow.x,
                     y: tokens.glassmorphic.shadows.innerGlow.y
-                ) // Inner glow
+                )
                 .shadow(
                     color: .black.opacity(tokens.glassmorphic.shadows.outerShadow.opacity),
                     radius: tokens.glassmorphic.shadows.outerShadow.radius,
                     x: tokens.glassmorphic.shadows.outerShadow.x,
                     y: tokens.glassmorphic.shadows.outerShadow.y
-                ) // Outer shadow
-        )
-        .padding(.all, tokens.elements.inputBar.padding) // Symmetrical padding for floating canvas effect
-        .overlay(
-            // Debug ruler overlay - shows exact container bounds
-            Rectangle()
-                .stroke(Color.red, lineWidth: 2)
-                .overlay(
-                    // Corner markers to measure padding
-                    VStack {
-                        HStack {
-                            Circle().fill(Color.green).frame(width: 8, height: 8)
-                            Spacer()
-                            Circle().fill(Color.green).frame(width: 8, height: 8)
-                        }
-                        Spacer()
-                        HStack {
-                            Circle().fill(Color.green).frame(width: 8, height: 8)
-                            Spacer()
-                            Circle().fill(Color.green).frame(width: 8, height: 8)
-                        }
-                    }
                 )
         )
-        .background(
-            // Debug background to show padding areas
-            Rectangle()
-                .fill(Color.blue.opacity(0.2))
-        )
+        .padding(.all, tokens.elements.inputBar.padding)
         .onAppear {
             isInputFocused = true
+        }
+        .onReceive(focusManager.$shouldFocusInput) { shouldFocus in
+            if shouldFocus {
+                isInputFocused = true
+                focusManager.clearFocusRequest()
+            }
+        }
+        .onChange(of: isInputFocused) { oldValue, newValue in
+            if !newValue && focusManager.appIsActive {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    focusManager.requestInputFocus()
+                }
+            }
+        }
+        .onTapGesture {
+            focusManager.requestInputFocus()
         }
     }
     
@@ -161,16 +165,7 @@ struct InputBarView: View {
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
         let messageToSend = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Clear input immediately for responsive feel
         inputText = ""
-        
-        // Snap back to compact state
-        withAnimation(.easeInOut(duration: 0.2)) {
-            textHeight = tokens.elements.inputBar.minHeight
-        }
-        
-        // Send message to MessageStore for processing
         messageStore.sendMessage(messageToSend)
     }
     
@@ -221,10 +216,9 @@ struct InputBarView: View {
         
         let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
         
-        // Calculate available width
-        let screenWidth = NSScreen.main?.frame.width ?? 1200
-        let paneWidth = screenWidth * tokens.pane.widthFraction
-        let availableWidth: CGFloat = paneWidth - 32 - 32 // Container padding + text padding
+        // Calculate available width based on actual window width
+        let windowWidth = NSApplication.shared.windows.first?.frame.width ?? 400
+        let availableWidth: CGFloat = windowWidth - 64 // Container padding + text padding
         
         // Get the height of old vs new text when laid out
         let oldHeight = measureTextHeight(for: oldValue, width: availableWidth, font: font)
@@ -236,9 +230,8 @@ struct InputBarView: View {
     
     private func getCurrentLineCount(for text: String) -> Int {
         let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
-        let screenWidth = NSScreen.main?.frame.width ?? 1200
-        let paneWidth = screenWidth * tokens.pane.widthFraction
-        let availableWidth: CGFloat = paneWidth - 32 - 32
+        let windowWidth = NSApplication.shared.windows.first?.frame.width ?? 400
+        let availableWidth: CGFloat = windowWidth - 64
         
         let height = measureTextHeight(for: text, width: availableWidth, font: font)
         let lineHeight = font.ascender + abs(font.descender) + font.leading
@@ -272,10 +265,9 @@ struct InputBarView: View {
     private func updateTextHeight(for text: String) {
         let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
         
-        // Calculate available width more precisely
-        let screenWidth = NSScreen.main?.frame.width ?? 1200
-        let paneWidth = screenWidth * tokens.pane.widthFraction
-        let availableWidth: CGFloat = paneWidth - 32 - 32 // Container padding + text padding
+        // Calculate available width based on actual window width
+        let windowWidth = NSApplication.shared.windows.first?.frame.width ?? 400
+        let availableWidth: CGFloat = windowWidth - 64 // Container padding + text padding
         
         // Use the actual text or a single character for measurement
         let measureText = text.isEmpty ? "Ag" : text

@@ -32,40 +32,32 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var threePaneManager = ThreePaneManager()
-    @StateObject private var keyboardHandler: KeyboardHandler
-    @StateObject private var messageStore = MessageStore()
-    
-    init() {
-        let manager = ThreePaneManager()
-        _threePaneManager = StateObject(wrappedValue: manager)
-        _keyboardHandler = StateObject(wrappedValue: KeyboardHandler(threePaneManager: manager))
-    }
+    @StateObject private var appCoordinator = AppCoordinator()
     
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                // Pane 1 - Always visible
+                // Pane 1 - Always visible, fills available space
                 PaneContainer(
-                    isActive: threePaneManager.activePaneIndex == 0,
+                    isActive: appCoordinator.threePaneManager.activePaneIndex == 0,
                     paneIndex: 0,
-                    threePaneManager: threePaneManager
+                    threePaneManager: appCoordinator.threePaneManager
                 )
-                .frame(width: threePaneManager.paneWidth)
+                .frame(maxWidth: .infinity)
                 
                 // Glassmorphic separator between Pane 1 and 2
-                if threePaneManager.shouldShowPane2 {
+                if appCoordinator.threePaneManager.shouldShowPane2 {
                     GlassmorphicSeparator()
                 }
                 
-                // Pane 2 - Visible when 2+ panes
-                if threePaneManager.shouldShowPane2 {
+                // Pane 2 - Visible when 2+ panes, fills available space
+                if appCoordinator.threePaneManager.shouldShowPane2 {
                     PaneContainer(
-                        isActive: threePaneManager.activePaneIndex == 1,
+                        isActive: appCoordinator.threePaneManager.activePaneIndex == 1,
                         paneIndex: 1,
-                        threePaneManager: threePaneManager
+                        threePaneManager: appCoordinator.threePaneManager
                     )
-                    .frame(width: threePaneManager.paneWidth)
+                    .frame(maxWidth: .infinity)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing),
                         removal: .move(edge: .trailing)
@@ -73,29 +65,30 @@ struct ContentView: View {
                 }
                 
                 // Glassmorphic separator between Pane 2 and 3
-                if threePaneManager.shouldShowPane3 {
+                if appCoordinator.threePaneManager.shouldShowPane3 {
                     GlassmorphicSeparator()
                 }
                 
-                // Pane 3 - Visible when 3 panes
-                if threePaneManager.shouldShowPane3 {
+                // Pane 3 - Visible when 3 panes, fills available space
+                if appCoordinator.threePaneManager.shouldShowPane3 {
                     PaneContainer(
-                        isActive: threePaneManager.activePaneIndex == 2,
+                        isActive: appCoordinator.threePaneManager.activePaneIndex == 2,
                         paneIndex: 2,
-                        threePaneManager: threePaneManager
+                        threePaneManager: appCoordinator.threePaneManager
                     )
-                    .frame(width: threePaneManager.paneWidth)
+                    .frame(maxWidth: .infinity)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing),
                         removal: .move(edge: .trailing)
                     ))
                 }
-                
-                Spacer(minLength: 0) // Absorb any remaining space
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .environmentObject(messageStore)
+        .environmentObject(appCoordinator.messageStore)
+        .environmentObject(appCoordinator.focusManager)
+        .environmentObject(appCoordinator.textMeasurementService)
+        .environmentObject(appCoordinator.scrollCoordinator)
         .background(
             Color(
                 red: DesignTokens.shared.background.primary.red,
@@ -104,22 +97,25 @@ struct ContentView: View {
             )
         )
         .onAppear {
-            threePaneManager.setupInitialWindowSize()
+            appCoordinator.threePaneManager.setupInitialWindowSize()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            threePaneManager.handleAppActivation()
+            appCoordinator.threePaneManager.handleAppActivation()
         }
         .focusable()
-        .onKeyPress(keys: [.init("§")]) { keyPress in
-            if keyPress.modifiers.contains(.control) {
-                keyboardHandler.handleKeyPress(key: "§", modifiers: keyPress.modifiers)
+        .onKeyPress(keys: [.init("§"), .upArrow, .downArrow]) { keyPress in
+            if keyPress.modifiers.contains(.control) && keyPress.key == .init("§") {
+                appCoordinator.keyboardHandler.handleKeyPress(key: "§", modifiers: keyPress.modifiers)
+                return .handled
+            }
+            if keyPress.modifiers.contains(.option) && (keyPress.key == .upArrow || keyPress.key == .downArrow) {
+                appCoordinator.keyboardHandler.handleArrowKeys(key: keyPress.key, modifiers: keyPress.modifiers)
                 return .handled
             }
             return .ignored
         }
         .onTapGesture {
             // Ensure the view regains focus when clicked anywhere
-            // This helps recover from focus loss during window operations
         }
     }
     

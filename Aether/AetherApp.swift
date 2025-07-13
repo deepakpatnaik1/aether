@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct AetherApp: App {
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
+        .defaultSize(width: 400, height: 600)
     }
 }

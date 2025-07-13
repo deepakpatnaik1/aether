@@ -68,7 +68,7 @@ struct DesignTokens: Codable {
     
     struct Elements: Codable {
         let inputBar: InputBar
-        let scrollback: [String: Double]
+        let scrollback: Scrollback
         let buttons: Buttons
         let panes: Panes
         let separators: Separators
@@ -85,6 +85,21 @@ struct DesignTokens: Codable {
             let placeholderPaddingHorizontal: Double
             let controlsSpacing: Double
             let defaultTextHeight: Double
+        }
+        
+        struct Scrollback: Codable {
+            let bodyFontSize: Double
+            let authorFontSize: Double
+            let highlight: Highlight
+            
+            struct Highlight: Codable {
+                let fillOpacity: Double
+                let borderOpacityMultiplier: Double
+                let shadowOpacityMultiplier: Double
+                let shadowRadiusMultiplier: Double
+                let borderWidth: Double
+                let shadowOffsetY: Double
+            }
         }
         
         struct Buttons: Codable {
@@ -114,6 +129,7 @@ struct DesignTokens: Codable {
     struct Animations: Codable {
         let paneTransition: PaneTransition
         let window: Window
+        let messageNavigation: MessageNavigation
         
         struct PaneTransition: Codable {
             let response: Double
@@ -123,6 +139,12 @@ struct DesignTokens: Codable {
         
         struct Window: Codable {
             let animationDuration: Double
+        }
+        
+        struct MessageNavigation: Codable {
+            let scrollDuration: Double
+            let smoothScrollIncrement: Double
+            let smoothScrollDuration: Double
         }
     }
     

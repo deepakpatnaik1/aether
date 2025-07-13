@@ -2,25 +2,25 @@
 //  FireworksService.swift
 //  Aether
 //
-//  Fireworks AI service implementation
+//  Fireworks AI service implementation for high-context LLM requests
 //
-//  IMPLEMENTATION: Dynamic Fireworks API Integration
-//  ===============================================
+//  BLUEPRINT SECTION: 🚨 Services - FireworksService
+//  ================================================
 //
-//  NO HARDCODING: All configuration from LLMProviders.json
-//  - Provider details loaded from external config
-//  - Model parameters configurable at runtime
-//  - API endpoints and authentication externalized
+//  DESIGN PRINCIPLES:
+//  - No Hardcoding: All configuration from LLMProviders.json
+//  - Modularity: Clean HTTP request handling with focused methods
+//  - Separation of Concerns: Configuration, request building, response parsing separated
+//  - No Redundancy: Shared patterns with OpenAIService minimized through clear structure
 //
-//  CONFIGURATION:
-//  - API key from environment variable (via config)
-//  - Model ID and parameters from JSON config
-//  - Base URL and endpoints from provider config
+//  FIREWORKS SPECIALIZATION:
+//  - Powers Llama 4 Maverick model with 1M token context window
+//  - High-performance inference for omniscient memory architecture
+//  - Future: Will power Vanessa, Gunnar, Vlad, Samara personas
 //
-//  ERROR HANDLING:
-//  - Consistent error reporting via protocol
-//  - Service-agnostic error types
-//  - Proper async/await error propagation
+//  CURRENT SCOPE: Basic chat interface
+//  - Non-streaming responses for reliability
+//  - Streaming infrastructure ready but disabled due to chunking issues
 
 import Foundation
 
@@ -30,6 +30,9 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
+    // MARK: - Configuration
+    
+    /// Get Fireworks provider and model configuration
     private func getProviderConfig() -> (provider: LLMProvider, model: LLMModel)? {
         guard let provider = configuration.getProvider("fireworks"),
               let model = configuration.getModel(provider: "fireworks", model: "llama-maverick") else {
@@ -38,7 +41,8 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
         return (provider, model)
     }
     
-    func sendMessage(_ message: String) async throws -> String {
+    /// Validate API key availability
+    private func validateConfiguration() throws -> (LLMProvider, LLMModel, String) {
         guard let (provider, model) = getProviderConfig() else {
             throw LLMServiceError.missingAPIKey("Fireworks configuration not loaded")
         }
@@ -48,58 +52,49 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
             throw LLMServiceError.missingAPIKey("Fireworks API key not configured")
         }
         
-        isLoading = true
-        errorMessage = nil
-        
-        defer { isLoading = false }
-        
-        let url = URL(string: "\(provider.baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let requestBody: [String: Any] = [
-            "model": model.id,
-            "messages": [
-                ["role": "user", "content": message]
-            ],
-            "max_tokens": model.maxTokens,
-            "temperature": model.temperature
-        ]
-        
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMServiceError.invalidResponse
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            throw LLMServiceError.httpError(httpResponse.statusCode)
-        }
-        
-        let responseJSON = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let choices = responseJSON?["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw LLMServiceError.invalidResponse
-        }
-        
-        return content
+        return (provider, model, apiKey)
     }
     
-    func streamMessage(_ message: String) async throws -> AsyncStream<String> {
-        guard let (provider, model) = getProviderConfig() else {
-            throw LLMServiceError.missingAPIKey("Fireworks configuration not loaded")
+    // MARK: - Request Building
+    
+    /// Build HTTP request for Fireworks API using shared infrastructure
+    private func buildRequest(provider: LLMProvider, model: LLMModel, apiKey: String, message: String, streaming: Bool = false) throws -> URLRequest {
+        return try HTTPRequestBuilder.buildChatCompletionRequest(
+            baseURL: provider.baseURL,
+            apiKey: apiKey,
+            model: model,
+            message: message,
+            streaming: streaming
+        )
+    }
+    
+    // MARK: - LLMServiceProtocol Implementation
+    
+    /// Send message to Fireworks API and return complete response
+    func sendMessage(_ message: String) async throws -> String {
+        let (provider, model, apiKey) = try validateConfiguration()
+        
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
         }
         
-        let apiKey = configuration.getApiKey(for: "fireworks")
-        guard !apiKey.isEmpty else {
-            throw LLMServiceError.missingAPIKey("Fireworks API key not configured")
+        defer {
+            Task { @MainActor in
+                isLoading = false
+            }
         }
+        
+        let request = try buildRequest(provider: provider, model: model, apiKey: apiKey, message: message)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        try LLMResponseParser.validateHTTPResponse(response)
+        return try LLMResponseParser.parseCompletionResponse(data)
+    }
+    
+    /// Stream message response from Fireworks API (infrastructure ready, currently disabled)
+    func streamMessage(_ message: String) async throws -> AsyncStream<String> {
+        let (provider, model, apiKey) = try validateConfiguration()
         
         return AsyncStream(String.self) { continuation in
             Task {
@@ -109,55 +104,15 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
                         errorMessage = nil
                     }
                     
-                    let url = URL(string: "\(provider.baseURL)/chat/completions")!
-                    var request = URLRequest(url: url)
-                    request.httpMethod = "POST"
-                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    
-                    let requestBody: [String: Any] = [
-                        "model": model.id,
-                        "messages": [
-                            ["role": "user", "content": message]
-                        ],
-                        "max_tokens": model.maxTokens,
-                        "temperature": model.temperature,
-                        "stream": true
-                    ]
-                    
-                    request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-                    
+                    let request = try buildRequest(provider: provider, model: model, apiKey: apiKey, message: message, streaming: true)
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     
-                    guard let httpResponse = response as? HTTPURLResponse else {
-                        throw LLMServiceError.invalidResponse
-                    }
+                    try LLMResponseParser.validateHTTPResponse(response)
                     
-                    guard httpResponse.statusCode == 200 else {
-                        throw LLMServiceError.httpError(httpResponse.statusCode)
-                    }
-                    
-                    for try await line in bytes.lines {
-                        if line.hasPrefix("data: ") {
-                            let data = String(line.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-                            
-                            if data == "[DONE]" {
-                                break
-                            }
-                            
-                            if data.isEmpty {
-                                continue
-                            }
-                            
-                            if let jsonData = data.data(using: .utf8),
-                               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                               let choices = json["choices"] as? [[String: Any]],
-                               let firstChoice = choices.first,
-                               let delta = firstChoice["delta"] as? [String: Any],
-                               let content = delta["content"] as? String {
-                                continuation.yield(content)
-                            }
-                        }
+                    // Use shared streaming parser
+                    let contentStream = LLMResponseParser.processStreamingResponse(bytes)
+                    for await content in contentStream {
+                        continuation.yield(content)
                     }
                     
                     continuation.finish()
@@ -174,10 +129,14 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
     }
 }
 
+// MARK: - Service Error Types
+
 enum LLMServiceError: Error {
     case missingAPIKey(String)
     case invalidResponse
     case httpError(Int)
+    case requestError(Error)
+    case parsingError(Error)
     
     var localizedDescription: String {
         switch self {
@@ -187,6 +146,10 @@ enum LLMServiceError: Error {
             return "Invalid response from LLM service"
         case .httpError(let code):
             return "HTTP error: \(code)"
+        case .requestError(let error):
+            return "Request error: \(error.localizedDescription)"
+        case .parsingError(let error):
+            return "Parsing error: \(error.localizedDescription)"
         }
     }
 }

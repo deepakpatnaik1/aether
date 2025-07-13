@@ -2,199 +2,137 @@
 //  LLMManager.swift
 //  Aether
 //
-//  LLM Priority Routing Manager
+//  LLM provider routing coordinator for unified chat interface
 //
-//  IMPLEMENTATION: Dynamic Provider Routing
-//  =======================================
+//  BLUEPRINT SECTION: 🚨 Services - ModelRouter (Dynamic Provider Routing)
+//  =======================================================================
 //
-//  NO HARDCODING: All routing from LLMProviders.json
-//  - Provider priority configurable at runtime
-//  - Models and providers externally defined
-//  - API endpoints and parameters from config
+//  DESIGN PRINCIPLES:
+//  - No Hardcoding: All routing from LLMProviders.json configuration
+//  - Separation of Concerns: Routing logic separate from individual services
+//  - Modularity: Service discovery and provider coordination abstracted
+//  - No Redundancy: Common routing logic unified between streaming/non-streaming
 //
-//  FEATURES:
-//  - Automatic fallback cascade based on config
-//  - Unified interface for all LLM interactions
-//  - Dynamic service discovery and validation
-//  - Runtime configuration reload capability
+//  RESPONSIBILITIES:
+//  - Coordinate requests across multiple LLM providers
+//  - Handle automatic fallback cascade based on external configuration
+//  - Manage service state and error handling
+//  - Provide unified interface for MessageStore
 //
-//  USAGE:
-//  - Single entry point for all AI conversations
-//  - Routes based on external configuration
-//  - Provides consistent response format
+//  CURRENT SCOPE: Basic User ↔ AI routing
+//  - OpenAI primary, Fireworks fallback
+//  - Future: Will route different personas to different models
 
 import Foundation
 
 class LLMManager: ObservableObject {
     private let configuration = LLMConfiguration()
-    private var services: [String: any LLMServiceProtocol] = [:]
+    private lazy var services: [String: any LLMServiceProtocol] = createServices()
+    private lazy var router: ProviderRouter = ProviderRouter(configuration: configuration, services: services)
     
     @Published var isLoading = false
     @Published var currentService = "None"
     @Published var errorMessage: String?
     
-    init() {
-        initializeServices()
+    // MARK: - Service Discovery
+    
+    /// Create service instances based on configuration
+    private func createServices() -> [String: any LLMServiceProtocol] {
+        var serviceMap: [String: any LLMServiceProtocol] = [:]
+        
+        // Initialize services for configured providers
+        if configuration.getProvider("fireworks") != nil {
+            serviceMap["fireworks"] = FireworksService()
+        }
+        if configuration.getProvider("openai") != nil {
+            serviceMap["openai"] = OpenAIService()
+        }
+        
+        return serviceMap
     }
     
-    private func initializeServices() {
-        services["fireworks"] = FireworksService()
-        services["openai"] = OpenAIService()
-    }
+    // MARK: - Routing Coordination
     
+    /// Send message with automatic provider fallback
     func sendMessage(_ message: String) async throws -> String {
-        await MainActor.run {
-            isLoading = true
-            errorMessage = nil
-        }
+        await updateLoadingState(isLoading: true)
         
-        defer { 
+        defer {
             Task { @MainActor in
-                isLoading = false
+                if !Task.isCancelled { self.isLoading = false }
             }
         }
         
-        guard let config = configuration.config else {
-            print("❌ LLM configuration not loaded")
-            throw LLMServiceError.missingAPIKey("LLM configuration not loaded")
+        return try await router.executeWithFallback { resolvedProvider in
+            await updateCurrentService(provider: resolvedProvider.provider, model: resolvedProvider.model)
+            return try await resolvedProvider.service.sendMessage(message)
         }
-        
-        print("🔄 Trying providers in order: \(config.routing.priority.map { "\($0.provider)/\($0.model)" })")
-        
-        // Try providers in priority order from config
-        for routing in config.routing.priority {
-            print("🔄 Attempting provider: \(routing.provider)")
-            
-            guard let service = services[routing.provider] else {
-                print("❌ Service not available: \(routing.provider)")
-                continue
-            }
-            
-            guard let provider = configuration.getProvider(routing.provider),
-                  let model = configuration.getModel(provider: routing.provider, model: routing.model) else {
-                print("❌ Configuration missing for: \(routing.provider)/\(routing.model)")
-                continue
-            }
-            
-            let apiKey = configuration.getApiKey(for: routing.provider)
-            print("🔑 API key for \(routing.provider): \(apiKey.isEmpty ? "❌ MISSING" : "✅ Present")")
-            
-            do {
-                await MainActor.run {
-                    currentService = "\(provider.name) (\(model.displayName))"
-                }
-                print("🚀 Calling \(provider.name) with model \(model.displayName)")
-                print("🔗 URL: \(provider.baseURL)")
-                let response = try await service.sendMessage(message)
-                print("✅ \(provider.name) succeeded")
-                return response
-            } catch {
-                print("❌ \(provider.name) failed: \(error)")
-                print("❌ Full error: \(error.localizedDescription)")
-                if let urlError = error as? URLError {
-                    print("❌ URL Error details: \(urlError)")
-                }
-                continue
-            }
-        }
-        
-        await MainActor.run {
-            currentService = "None"
-            errorMessage = "All configured LLM services failed"
-        }
-        throw LLMServiceError.invalidResponse
     }
     
+    /// Stream message with automatic provider fallback
     func streamMessage(_ message: String) async throws -> AsyncStream<String> {
-        await MainActor.run {
-            isLoading = true
-            errorMessage = nil
-        }
+        await updateLoadingState(isLoading: true)
         
-        guard let config = configuration.config else {
-            print("❌ LLM configuration not loaded")
-            throw LLMServiceError.missingAPIKey("LLM configuration not loaded")
-        }
-        
-        print("🔄 Trying providers in order: \(config.routing.priority.map { "\($0.provider)/\($0.model)" })")
-        
-        // Try providers in priority order from config
-        for routing in config.routing.priority {
-            print("🔄 Attempting provider: \(routing.provider)")
+        return try await router.executeWithFallback { resolvedProvider in
+            await updateCurrentService(provider: resolvedProvider.provider, model: resolvedProvider.model)
+            let stream = try await resolvedProvider.service.streamMessage(message)
             
-            guard let service = services[routing.provider] else {
-                print("❌ Service not available: \(routing.provider)")
-                continue
+            // Clean up loading state when stream completes
+            Task {
+                for await _ in stream { }
+                await MainActor.run { self.isLoading = false }
             }
             
-            guard let provider = configuration.getProvider(routing.provider),
-                  let model = configuration.getModel(provider: routing.provider, model: routing.model) else {
-                print("❌ Configuration missing for: \(routing.provider)/\(routing.model)")
-                continue
-            }
-            
-            let apiKey = configuration.getApiKey(for: routing.provider)
-            print("🔑 API key for \(routing.provider): \(apiKey.isEmpty ? "❌ MISSING" : "✅ Present")")
-            
-            do {
-                await MainActor.run {
-                    currentService = "\(provider.name) (\(model.displayName))"
-                }
-                print("🚀 Streaming from \(provider.name) with model \(model.displayName)")
-                print("🔗 URL: \(provider.baseURL)")
-                
-                let stream = try await service.streamMessage(message)
-                print("✅ \(provider.name) streaming started")
-                
-                // Clean up loading state when stream completes
-                Task {
-                    for await _ in stream {
-                        // Stream will be consumed by the caller
-                    }
-                    await MainActor.run {
-                        self.isLoading = false
-                    }
-                }
-                
-                return stream
-            } catch {
-                print("❌ \(provider.name) failed: \(error)")
-                print("❌ Full error: \(error.localizedDescription)")
-                if let urlError = error as? URLError {
-                    print("❌ URL Error details: \(urlError)")
-                }
-                continue
-            }
+            return stream
         }
-        
-        await MainActor.run {
-            currentService = "None"
-            errorMessage = "All configured LLM services failed"
-            isLoading = false
-        }
-        throw LLMServiceError.invalidResponse
     }
     
-    func checkServiceHealth() -> [String: Bool] {
-        guard let config = configuration.config else {
-            return [:]
+    // MARK: - Router Integration
+    
+    // MARK: - State Management
+    
+    /// Update loading state and current service on main thread
+    @MainActor
+    private func updateLoadingState(isLoading: Bool, error: String? = nil) {
+        self.isLoading = isLoading
+        if let error = error {
+            self.errorMessage = error
+            self.currentService = "None"
+        } else {
+            self.errorMessage = nil
         }
-        
-        var health: [String: Bool] = [:]
-        
-        for (providerId, _) in config.providers {
-            let apiKey = configuration.getApiKey(for: providerId)
-            health[providerId] = !apiKey.isEmpty && services[providerId] != nil
-        }
-        
-        return health
     }
     
+    /// Update current service display name on main thread
+    @MainActor
+    private func updateCurrentService(provider: LLMProvider, model: LLMModel) {
+        currentService = "\(provider.name) (\(model.displayName))"
+    }
+    
+    // MARK: - Service Health
+    
+    /// Check health status of all configured providers
+    func checkServiceHealth() -> [String: ProviderHealth] {
+        return router.checkServiceHealth()
+    }
+    
+    /// Get list of available provider IDs
     func getAvailableProviders() -> [String] {
-        return Array(services.keys)
+        return router.getAvailableProviders()
     }
     
+    /// Get current routing priority from configuration
     func getCurrentRoutingPriority() -> [RoutingEntry] {
-        return configuration.getRoutingPriority()
+        return router.getRoutingPriority()
+    }
+    
+    /// Check if specific provider is available
+    func isProviderAvailable(_ providerId: String) -> Bool {
+        return router.isProviderAvailable(providerId)
+    }
+    
+    /// Get provider display name for UI
+    func getProviderDisplayName(_ providerId: String) -> String {
+        return router.getProviderDisplayName(providerId)
     }
 }

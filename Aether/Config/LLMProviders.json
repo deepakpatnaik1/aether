@@ -1,53 +1,74 @@
 {
+  "_meta": {
+    "description": "Aether LLM Provider Configuration",
+    "version": "1.0",
+    "blueprint_section": "🚨 Services - Dynamic LLM Provider Registry",
+    "design_principles": [
+      "No Hardcoding: All providers/models externally configurable",
+      "Modularity: Easy addition of new providers without code changes", 
+      "Separation of Concerns: Model routing logic externalized from Swift code",
+      "No Redundancy: Single source of truth for all LLM configuration"
+    ]
+  },
+  
   "providers": {
+    "openai": {
+      "name": "OpenAI",
+      "baseURL": "https://api.openai.com/v1",
+      "apiKeyEnvVar": "OPENAI_API_KEY",
+      "category": "production",
+      "models": {
+        "gpt-4.1-mini": {
+          "id": "gpt-4.1-mini",
+          "displayName": "GPT-4.1 Mini",
+          "maxTokens": 4000,
+          "temperature": 0.7,
+          "contextWindow": 128000,
+          "supportedFeatures": ["streaming", "function_calling", "vision"]
+        }
+      }
+    },
     "fireworks": {
-      "name": "Fireworks AI",
+      "name": "Fireworks AI", 
       "baseURL": "https://api.fireworks.ai/inference/v1",
       "apiKeyEnvVar": "FIREWORKS_API_KEY",
+      "category": "high_context",
       "models": {
         "llama-maverick": {
           "id": "accounts/fireworks/models/llama-v3p1-405b-instruct",
           "displayName": "Llama 4 Maverick",
           "maxTokens": 4000,
           "temperature": 0.7,
-          "contextWindow": 1000000
-        }
-      }
-    },
-    "openai": {
-      "name": "OpenAI",
-      "baseURL": "https://api.openai.com/v1",
-      "apiKeyEnvVar": "OPENAI_API_KEY",
-      "models": {
-        "gpt-4o": {
-          "id": "gpt-4o",
-          "displayName": "GPT-4o",
-          "maxTokens": 4000,
-          "temperature": 0.7,
-          "contextWindow": 200000
+          "contextWindow": 1000000,
+          "supportedFeatures": ["streaming", "high_context"],
+          "blueprint_note": "Enables 1M token omniscient memory architecture"
         }
       }
     },
     "anthropic": {
       "name": "Anthropic",
-      "baseURL": "https://api.anthropic.com/v1",
+      "baseURL": "https://api.anthropic.com/v1", 
       "apiKeyEnvVar": "ANTHROPIC_API_KEY",
+      "category": "collaboration",
       "models": {
         "claude-3-5-sonnet": {
           "id": "claude-3-5-sonnet-20241022",
           "displayName": "Claude 3.5 Sonnet",
           "maxTokens": 4000,
           "temperature": 0.7,
-          "contextWindow": 200000
+          "contextWindow": 200000,
+          "supportedFeatures": ["streaming", "analysis", "collaboration"],
+          "blueprint_note": "Powers Claude persona in 5-member AI team"
         }
       }
     }
   },
+  
   "routing": {
     "priority": [
       {
         "provider": "openai", 
-        "model": "gpt-4o"
+        "model": "gpt-4.1-mini"
       },
       {
         "provider": "fireworks",

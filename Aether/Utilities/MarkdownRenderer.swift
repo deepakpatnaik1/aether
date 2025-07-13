@@ -26,7 +26,7 @@ struct MarkdownRenderer: View {
     
     var body: some View {
         Text(.init(content))
-            .font(.custom(tokens.typography.bodyFont, size: 14))
+            .font(.custom(tokens.typography.bodyFont, size: tokens.elements.scrollback.bodyFontSize))
             .foregroundColor(.primary)
             .textSelection(.enabled)
     }

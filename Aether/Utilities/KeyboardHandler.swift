@@ -2,18 +2,46 @@
 //  KeyboardHandler.swift
 //  Aether
 //
-//  Local keyboard shortcuts when app is active
+//  Event-driven keyboard shortcut coordination
 //
+//  BLUEPRINT SECTION: 🚨 Utilities - Keyboard Management
+//  ====================================================
+//
+//  DESIGN PRINCIPLES:
+//  - Separation of Concerns: Input detection only, no business logic
+//  - Event-Driven: Publishes events rather than direct method calls
+//  - Single Responsibility: Handles only keyboard input coordination
+//
+//  RESPONSIBILITIES:
+//  - Detect keyboard input events
+//  - Publish navigation and window events
+//  - Coordinate with focus management
+//  - Provide clean interface for keyboard shortcuts
 
 import SwiftUI
+import Combine
 
 class KeyboardHandler: ObservableObject {
     
-    private weak var threePaneManager: ThreePaneManager?
+    // Event publishers for decoupled communication
+    private let navigationSubject = PassthroughSubject<NavigationEvent, Never>()
+    private let windowSubject = PassthroughSubject<WindowEvent, Never>()
+    private let focusSubject = PassthroughSubject<FocusEvent, Never>()
     
-    init(threePaneManager: ThreePaneManager) {
-        self.threePaneManager = threePaneManager
-        print("✅ Local keyboard handler initialized")
+    var navigationPublisher: AnyPublisher<NavigationEvent, Never> {
+        navigationSubject.eraseToAnyPublisher()
+    }
+    
+    var windowPublisher: AnyPublisher<WindowEvent, Never> {
+        windowSubject.eraseToAnyPublisher()
+    }
+    
+    var focusPublisher: AnyPublisher<FocusEvent, Never> {
+        focusSubject.eraseToAnyPublisher()
+    }
+    
+    init() {
+        print("✅ Event-driven keyboard handler initialized")
     }
     
     // MARK: - Key Event Handling
@@ -21,18 +49,46 @@ class KeyboardHandler: ObservableObject {
     func handleKeyPress(key: String, modifiers: EventModifiers) {
         // Check for Ctrl+§ (section sign)
         if key == "§" && modifiers.contains(.control) {
-            handleCtrlSectionPressed()
+            windowSubject.send(.cycleSize)
+            focusSubject.send(.restoreAfterWindowOperation)
         }
     }
     
     @MainActor
-    private func handleCtrlSectionPressed() {
-        print("🎯 Ctrl+§ detected! Cycling window size...")
+    func handleArrowKeys(key: KeyEquivalent, modifiers: EventModifiers) {
+        guard modifiers.contains(.option) && (key == .upArrow || key == .downArrow) else { return }
         
-        // Cycle window size immediately
-        threePaneManager?.cycleWindowSize()
+        let direction: NavigationDirection = (key == .upArrow) ? .up : .down
         
-        // Handle app activation (focus rightmost pane)
-        threePaneManager?.handleAppActivation()
+        if modifiers.contains(.shift) {
+            // Shift+Option+Arrow: Smooth scroll
+            navigationSubject.send(.smoothScroll(direction))
+        } else {
+            // Option+Arrow: Message navigation
+            navigationSubject.send(.navigate(direction))
+        }
+        
+        // Request focus restoration after navigation
+        focusSubject.send(.restoreAfterOperation)
     }
+}
+
+// MARK: - Event Types
+
+enum NavigationEvent {
+    case navigate(NavigationDirection)
+    case smoothScroll(NavigationDirection)
+}
+
+enum NavigationDirection {
+    case up, down
+}
+
+enum WindowEvent {
+    case cycleSize
+}
+
+enum FocusEvent {
+    case restoreAfterOperation
+    case restoreAfterWindowOperation
 }

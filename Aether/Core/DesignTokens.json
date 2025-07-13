@@ -56,7 +56,18 @@
       "controlsSpacing": 12,
       "defaultTextHeight": 22
     },
-    "scrollback": {},
+    "scrollback": {
+      "bodyFontSize": 12,
+      "authorFontSize": 10,
+      "highlight": {
+        "fillOpacity": 0.03,
+        "borderOpacityMultiplier": 0.5,
+        "shadowOpacityMultiplier": 0.3,
+        "shadowRadiusMultiplier": 0.5,
+        "borderWidth": 0.5,
+        "shadowOffsetY": -1
+      }
+    },
     "buttons": {
       "plusSize": 24,
       "sendSize": 20,
@@ -86,6 +97,11 @@
     },
     "window": {
       "animationDuration": 0.25
+    },
+    "messageNavigation": {
+      "scrollDuration": 0.3,
+      "smoothScrollIncrement": 100,
+      "smoothScrollDuration": 0.15
     }
   },
   "pane": {

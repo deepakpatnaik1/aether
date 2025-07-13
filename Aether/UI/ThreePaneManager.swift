@@ -119,13 +119,13 @@ class ThreePaneManager: ObservableObject {
         // Defer updates to avoid publishing during view update
         DispatchQueue.main.async {
             let tokens = DesignTokens.shared.animations.paneTransition
+            
+            // Update pane visibility and window size together
             withAnimation(.spring(response: tokens.response, dampingFraction: tokens.dampingFraction, blendDuration: tokens.blendDuration)) {
                 self.currentWindowSize = allCases[nextIndex]
                 self.updatePaneVisibility()
+                self.resizeWindow()
             }
-            
-            // Resize window immediately (with its own animation)
-            self.resizeWindow()
             
             // Ensure app stays focused during pane transitions
             self.maintainAppFocus()
@@ -222,9 +222,7 @@ class ThreePaneManager: ObservableObject {
     
     // MARK: - Initial Setup
     func setupInitialWindowSize() {
-        DispatchQueue.main.async {
-            // Set initial window size on app launch
-            self.resizeWindow()
-        }
+        // Set initial window size immediately on app launch
+        resizeWindow()
     }
 }

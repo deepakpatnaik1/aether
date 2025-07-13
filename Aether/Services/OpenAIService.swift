@@ -2,25 +2,25 @@
 //  OpenAIService.swift
 //  Aether
 //
-//  OpenAI service implementation
+//  OpenAI GPT-4o service implementation for production chat
 //
-//  IMPLEMENTATION: Dynamic OpenAI API Integration
-//  =============================================
+//  BLUEPRINT SECTION: 🚨 Services - OpenAIService
+//  ===============================================
 //
-//  NO HARDCODING: All configuration from LLMProviders.json
-//  - Provider details loaded from external config
-//  - Model parameters configurable at runtime
-//  - API endpoints and authentication externalized
+//  DESIGN PRINCIPLES:
+//  - No Hardcoding: All configuration from LLMProviders.json
+//  - Modularity: Clean HTTP request handling with shared components
+//  - Separation of Concerns: Configuration, request building, response parsing separated
+//  - No Redundancy: Shares HTTPRequestBuilder and LLMResponseParser with FireworksService
 //
-//  CONFIGURATION:
-//  - API key from environment variable (via config)
-//  - Model ID and parameters from JSON config
-//  - Base URL and endpoints from provider config
+//  OPENAI SPECIALIZATION:
+//  - Powers GPT-4o model for reliable production responses
+//  - Primary fallback when Fireworks unavailable
+//  - Future: Will serve as general conversation backbone
 //
-//  ERROR HANDLING:
-//  - Consistent error reporting via protocol
-//  - Service-agnostic error types
-//  - Proper async/await error propagation
+//  CURRENT SCOPE: Basic chat interface
+//  - Non-streaming responses for reliability
+//  - Streaming infrastructure ready but disabled due to chunking issues
 
 import Foundation
 
@@ -30,15 +30,19 @@ class OpenAIService: ObservableObject, LLMServiceProtocol {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
+    // MARK: - Configuration
+    
+    /// Get OpenAI provider and model configuration
     private func getProviderConfig() -> (provider: LLMProvider, model: LLMModel)? {
         guard let provider = configuration.getProvider("openai"),
-              let model = configuration.getModel(provider: "openai", model: "gpt-4o") else {
+              let model = configuration.getModel(provider: "openai", model: "gpt-4.1-mini") else {
             return nil
         }
         return (provider, model)
     }
     
-    func sendMessage(_ message: String) async throws -> String {
+    /// Validate API key availability
+    private func validateConfiguration() throws -> (LLMProvider, LLMModel, String) {
         guard let (provider, model) = getProviderConfig() else {
             throw LLMServiceError.missingAPIKey("OpenAI configuration not loaded")
         }
@@ -48,58 +52,49 @@ class OpenAIService: ObservableObject, LLMServiceProtocol {
             throw LLMServiceError.missingAPIKey("OpenAI API key not configured")
         }
         
-        isLoading = true
-        errorMessage = nil
-        
-        defer { isLoading = false }
-        
-        let url = URL(string: "\(provider.baseURL)/chat/completions")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let requestBody: [String: Any] = [
-            "model": model.id,
-            "messages": [
-                ["role": "user", "content": message]
-            ],
-            "max_tokens": model.maxTokens,
-            "temperature": model.temperature
-        ]
-        
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMServiceError.invalidResponse
-        }
-        
-        guard httpResponse.statusCode == 200 else {
-            throw LLMServiceError.httpError(httpResponse.statusCode)
-        }
-        
-        let responseJSON = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let choices = responseJSON?["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw LLMServiceError.invalidResponse
-        }
-        
-        return content
+        return (provider, model, apiKey)
     }
     
-    func streamMessage(_ message: String) async throws -> AsyncStream<String> {
-        guard let (provider, model) = getProviderConfig() else {
-            throw LLMServiceError.missingAPIKey("OpenAI configuration not loaded")
+    // MARK: - Request Building
+    
+    /// Build HTTP request for OpenAI API using shared infrastructure
+    private func buildRequest(provider: LLMProvider, model: LLMModel, apiKey: String, message: String, streaming: Bool = false) throws -> URLRequest {
+        return try HTTPRequestBuilder.buildChatCompletionRequest(
+            baseURL: provider.baseURL,
+            apiKey: apiKey,
+            model: model,
+            message: message,
+            streaming: streaming
+        )
+    }
+    
+    // MARK: - LLMServiceProtocol Implementation
+    
+    /// Send message to OpenAI API and return complete response
+    func sendMessage(_ message: String) async throws -> String {
+        let (provider, model, apiKey) = try validateConfiguration()
+        
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
         }
         
-        let apiKey = configuration.getApiKey(for: "openai")
-        guard !apiKey.isEmpty else {
-            throw LLMServiceError.missingAPIKey("OpenAI API key not configured")
+        defer {
+            Task { @MainActor in
+                isLoading = false
+            }
         }
+        
+        let request = try buildRequest(provider: provider, model: model, apiKey: apiKey, message: message)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        try LLMResponseParser.validateHTTPResponse(response)
+        return try LLMResponseParser.parseCompletionResponse(data)
+    }
+    
+    /// Stream message response from OpenAI API (infrastructure ready, currently disabled)
+    func streamMessage(_ message: String) async throws -> AsyncStream<String> {
+        let (provider, model, apiKey) = try validateConfiguration()
         
         return AsyncStream(String.self) { continuation in
             Task {
@@ -109,50 +104,15 @@ class OpenAIService: ObservableObject, LLMServiceProtocol {
                         errorMessage = nil
                     }
                     
-                    let url = URL(string: "\(provider.baseURL)/chat/completions")!
-                    var request = URLRequest(url: url)
-                    request.httpMethod = "POST"
-                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    
-                    let requestBody: [String: Any] = [
-                        "model": model.id,
-                        "messages": [
-                            ["role": "user", "content": message]
-                        ],
-                        "max_tokens": model.maxTokens,
-                        "temperature": model.temperature,
-                        "stream": true
-                    ]
-                    
-                    request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-                    
+                    let request = try buildRequest(provider: provider, model: model, apiKey: apiKey, message: message, streaming: true)
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     
-                    guard let httpResponse = response as? HTTPURLResponse else {
-                        throw LLMServiceError.invalidResponse
-                    }
+                    try LLMResponseParser.validateHTTPResponse(response)
                     
-                    guard httpResponse.statusCode == 200 else {
-                        throw LLMServiceError.httpError(httpResponse.statusCode)
-                    }
-                    
-                    for try await line in bytes.lines {
-                        if line.hasPrefix("data: ") {
-                            let data = String(line.dropFirst(6))
-                            if data == "[DONE]" {
-                                break
-                            }
-                            
-                            if let jsonData = data.data(using: .utf8),
-                               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                               let choices = json["choices"] as? [[String: Any]],
-                               let firstChoice = choices.first,
-                               let delta = firstChoice["delta"] as? [String: Any],
-                               let content = delta["content"] as? String {
-                                continuation.yield(content)
-                            }
-                        }
+                    // Use shared streaming parser
+                    let contentStream = LLMResponseParser.processStreamingResponse(bytes)
+                    for await content in contentStream {
+                        continuation.yield(content)
                     }
                     
                     continuation.finish()
