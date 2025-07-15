@@ -72,7 +72,7 @@ class VaultWriter: ObservableObject {
     /// BLUEPRINT: "FullTurn-YYYY-MM-DD-HHMM.md — Complete uncompressed logs"
     /// ACHIEVEMENT: ✅ Fully implemented with automatic triggering from MessageStore
     /// PURPOSE: Enterprise-grade audit trail for deep recall, debugging, and trim quality assessment
-    func autoSaveTurn(userMessage: String, aiResponse: String) {
+    func autoSaveTurn(userMessage: String, aiResponse: String, persona: String = "Aether") {
         let timestamp = createTimestamp()
         let filename = "FullTurn-\(timestamp).md"
         let filePath = "\(VaultConfig.superJournalPath)/\(filename)"
@@ -86,9 +86,47 @@ class VaultWriter: ObservableObject {
         do {
             try turnContent.write(toFile: filePath, atomically: true, encoding: .utf8)
             print("📝 Auto-saved turn to superjournal: \(filename)")
+            
+            // Auto-generate machine trim
+            autoGenerateMachineTrim(userMessage: userMessage, aiResponse: aiResponse, persona: persona, timestamp: timestamp)
         } catch {
             print("❌ Failed to auto-save turn to superjournal: \(error)")
         }
+    }
+    
+    /// Auto-generate machine trim after superjournal save
+    /// BLUEPRINT: Machine trimming automatically triggered after each conversation turn
+    /// PURPOSE: Semantic compression following machine-trim.md methodology
+    private func autoGenerateMachineTrim(userMessage: String, aiResponse: String, persona: String, timestamp: String) {
+        let machineTrim = MachineTrim()
+        let compressedContent = machineTrim.compressTurn(userMessage: userMessage, aiResponse: aiResponse, persona: persona)
+        
+        // Convert timestamp format for journal filename
+        let journalTimestamp = convertTimestampForJournal(timestamp)
+        let journalFilename = "Trim-\(journalTimestamp).md"
+        let journalFilePath = "\(VaultConfig.journalPath)/\(journalFilename)"
+        
+        do {
+            try compressedContent.write(toFile: journalFilePath, atomically: true, encoding: .utf8)
+            print("🗜️ Auto-generated machine trim: \(journalFilename)")
+        } catch {
+            print("❌ Failed to auto-generate machine trim: \(error)")
+        }
+    }
+    
+    /// Convert timestamp format from superjournal to journal format
+    /// From: "20250715-091023" to "2025-07-15-0910"
+    private func convertTimestampForJournal(_ timestamp: String) -> String {
+        if timestamp.count == 15 { // "20250715-091023"
+            let year = String(timestamp.prefix(4))
+            let month = String(timestamp.dropFirst(4).prefix(2))
+            let day = String(timestamp.dropFirst(6).prefix(2))
+            let hour = String(timestamp.dropFirst(9).prefix(2))
+            let minute = String(timestamp.dropFirst(11).prefix(2))
+            
+            return "\(year)-\(month)-\(day)-\(hour)\(minute)"
+        }
+        return timestamp
     }
     
     /// Migrate existing conversation turns to superjournal
