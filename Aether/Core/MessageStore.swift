@@ -226,6 +226,9 @@ class MessageStore: ObservableObject {
                 // Update with main response
                 await MainActor.run { updateStreamingMessage(id: messageId, content: personaResponse.mainResponse) }
                 
+                // Save complete turn to superjournal (full audit trail)
+                autoSaveCompleteTurn(userMessage: userMessage, aiResponse: personaResponse.mainResponse)
+                
                 // Save trimmed version to journal if available
                 if let trimmedResponse = personaResponse.trimmedResponse {
                     await MainActor.run { saveTrimmedResponse(trimmedResponse) }
@@ -483,6 +486,111 @@ class MessageStore: ObservableObject {
                 print("❌ Failed to save historical trim: \(error)")
             }
         }
+    }
+    // MARK: - Journal File Reprocessing
+    
+    /// Reprocess existing journal files using proper LLM dual-task compression
+    /// PURPOSE: Fix the 19 broken journal files that were generated with programmatic compression
+    func reprocessJournalFiles() async {
+        print("🔄 Starting journal file reprocessing with LLM dual-task compression...")
+        
+        // Get all superjournal files
+        let superjournalFiles = VaultWriter.shared.getSuperJournalFiles()
+        print("📊 Found \(superjournalFiles.count) superjournal files to reprocess")
+        
+        for filename in superjournalFiles {
+            do {
+                // Parse superjournal file
+                let superjournalPath = "\(VaultConfig.superJournalPath)/\(filename)"
+                let content = try String(contentsOfFile: superjournalPath, encoding: .utf8)
+                let (userMessage, aiResponse, persona) = parseSuperJournalFile(content)
+                
+                if !userMessage.isEmpty && !aiResponse.isEmpty {
+                    // Use LLM dual-task system to get proper compression
+                    let personaResponse = try await llmManager.sendMessage(userMessage, persona: persona)
+                    
+                    if let trimmedResponse = personaResponse.trimmedResponse {
+                        // Save properly compressed version
+                        let timestamp = extractTimestampFromFilename(filename)
+                        VaultWriter.shared.saveMachineTrim(trimmedResponse, timestamp: timestamp)
+                        print("✅ Reprocessed: \(filename)")
+                    } else {
+                        print("⚠️ No compressed response from LLM for: \(filename)")
+                    }
+                } else {
+                    print("⚠️ Could not parse superjournal file: \(filename)")
+                }
+                
+            } catch {
+                print("❌ Failed to reprocess \(filename): \(error)")
+            }
+        }
+        
+        print("🎉 Journal file reprocessing complete!")
+    }
+    
+    /// Parse superjournal file to extract user message, AI response, and persona
+    private func parseSuperJournalFile(_ content: String) -> (userMessage: String, aiResponse: String, persona: String) {
+        let lines = content.components(separatedBy: .newlines)
+        
+        var userMessage = ""
+        var aiResponse = ""
+        var persona = "Aether"
+        
+        var collectingUser = false
+        var collectingAI = false
+        
+        for line in lines {
+            if line.hasPrefix("## Boss") {
+                collectingUser = true
+                collectingAI = false
+            } else if line.hasPrefix("## Aether") {
+                collectingUser = false
+                collectingAI = true
+                persona = "Aether"
+            } else if line.hasPrefix("## Samara") {
+                collectingUser = false
+                collectingAI = true
+                persona = "Samara"
+            } else if line.hasPrefix("## Vlad") {
+                collectingUser = false
+                collectingAI = true
+                persona = "Vlad"
+            } else if line.hasPrefix("## Vanessa") {
+                collectingUser = false
+                collectingAI = true
+                persona = "Vanessa"
+            } else if line.hasPrefix("---") || line.hasPrefix("*End of turn*") {
+                collectingUser = false
+                collectingAI = false
+            } else if collectingUser && !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !userMessage.isEmpty {
+                    userMessage += "\n"
+                }
+                userMessage += line
+            } else if collectingAI && !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !aiResponse.isEmpty {
+                    aiResponse += "\n"
+                }
+                aiResponse += line
+            }
+        }
+        
+        return (userMessage, aiResponse, persona)
+    }
+    
+    /// Extract timestamp from superjournal filename for journal file creation
+    private func extractTimestampFromFilename(_ filename: String) -> String {
+        // Convert "FullTurn-20250715-090000.md" to "20250715-090000"
+        let pattern = "FullTurn-(\\d{8}-\\d{6})\\.md"
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let range = NSRange(location: 0, length: filename.utf16.count)
+        
+        if let match = regex.firstMatch(in: filename, options: [], range: range) {
+            return (filename as NSString).substring(with: match.range(at: 1))
+        }
+        
+        return ""
     }
 }
 

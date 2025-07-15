@@ -86,21 +86,15 @@ class VaultWriter: ObservableObject {
         do {
             try turnContent.write(toFile: filePath, atomically: true, encoding: .utf8)
             print("📝 Auto-saved turn to superjournal: \(filename)")
-            
-            // Auto-generate machine trim
-            autoGenerateMachineTrim(userMessage: userMessage, aiResponse: aiResponse, persona: persona, timestamp: timestamp)
         } catch {
             print("❌ Failed to auto-save turn to superjournal: \(error)")
         }
     }
     
-    /// Auto-generate machine trim after superjournal save
-    /// BLUEPRINT: Machine trimming automatically triggered after each conversation turn
-    /// PURPOSE: Semantic compression following machine-trim.md methodology
-    private func autoGenerateMachineTrim(userMessage: String, aiResponse: String, persona: String, timestamp: String) {
-        let machineTrim = MachineTrim()
-        let compressedContent = machineTrim.compressTurn(userMessage: userMessage, aiResponse: aiResponse, persona: persona)
-        
+    /// Save machine-compressed turn to journal
+    /// BLUEPRINT: Machine trimming handled by LLMManager dual-task system
+    /// PURPOSE: Save the compressed turn that comes from LLMManager's dual-task output
+    func saveMachineTrim(_ compressedContent: String, timestamp: String) {
         // Convert timestamp format for journal filename
         let journalTimestamp = convertTimestampForJournal(timestamp)
         let journalFilename = "Trim-\(journalTimestamp).md"
@@ -108,9 +102,9 @@ class VaultWriter: ObservableObject {
         
         do {
             try compressedContent.write(toFile: journalFilePath, atomically: true, encoding: .utf8)
-            print("🗜️ Auto-generated machine trim: \(journalFilename)")
+            print("🗜️ Saved machine trim: \(journalFilename)")
         } catch {
-            print("❌ Failed to auto-generate machine trim: \(error)")
+            print("❌ Failed to save machine trim: \(error)")
         }
     }
     
@@ -507,7 +501,7 @@ class VaultWriter: ObservableObject {
     }
     
     /// Get all existing superjournal files
-    private func getSuperJournalFiles() -> [String] {
+    func getSuperJournalFiles() -> [String] {
         do {
             let files = try FileManager.default.contentsOfDirectory(atPath: VaultConfig.superJournalPath)
             return files.filter { $0.hasPrefix("FullTurn-") && $0.hasSuffix(".md") }
