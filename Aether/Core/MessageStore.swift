@@ -69,8 +69,10 @@ class MessageStore: ObservableObject {
             loadConversationHistory()
             migrateExistingConversationToSuperjournal()
             migrateHistoricalMessagesToTrims()
-            // Manually fix superjournal timestamps with realistic timeline
-            vaultWriter.fixSuperjournalTimestamps()
+            // NOTE: fixSuperjournalTimestamps() removed - was destructive
+            
+            // DISABLED: One-time machine trim processing (was generating poor quality trims)
+            // await VaultWriter.shared.processSuperJournalToTrims()
         }
     }
     
@@ -104,8 +106,16 @@ class MessageStore: ObservableObject {
         
         // Check for write commands first
         if let writeResult = VaultWriter.shared.processCommand(messageContent) {
-            Task { @MainActor in
-                addAIMessage(writeResult, persona: "aether") // Legacy responses become "aether"
+            if writeResult == "CLEAR_SCROLLBACK_COMMAND" {
+                // Handle scrollback clearing
+                Task { @MainActor in
+                    clearMessages()
+                    addAIMessage("🧹 Scrollback cleared - conversation reset to zero messages", persona: "aether")
+                }
+            } else {
+                Task { @MainActor in
+                    addAIMessage(writeResult, persona: "aether") // Legacy responses become "aether"
+                }
             }
         } else {
             // Route to current active persona with cleaned content

@@ -30,8 +30,7 @@ class LLMManager: ObservableObject {
     private lazy var services: [String: any LLMServiceProtocol] = createServices()
     private lazy var router: ProviderRouter = ProviderRouter(configuration: configuration, services: services)
     
-    // BLUEPRINT: Memory integration for omniscient context
-    private let memoryIndex = ContextMemoryIndex.shared
+    // BLUEPRINT: Memory integration handled by PersonaRegistry omniscient context
     
     // PERSONA SYSTEM: PersonaRegistry dependency for behavioral rules
     private var personaRegistry: PersonaRegistry?
@@ -95,50 +94,28 @@ class LLMManager: ObservableObject {
     /// Build persona-aware prompt with compression instructions
     /// ARCHITECTURE: Persona responds authentically, then applies machine compression to own work
     private func buildPersonaPrompt(persona: String?, userMessage: String) throws -> String {
-        // Get conversation context from memory
-        let conversationContext = memoryIndex.getConversationContext()
+        // Load persona omniscient context (boss + tools + journal + persona)
+        let omniscientContext = getPersonaBehavioralRules(for: persona)
         
-        // Load persona behavioral rules (if specified)
-        let personaRules = getPersonaBehavioralRules(for: persona)
+        // Load dual-task instructions
+        let dualTaskInstructions = try loadDualTaskInstructions()
         
         // Load machine compression methodology
         let compressionRules = try loadCompressionRules()
         
         // Build unified prompt where persona compresses their own response
         return """
-        \(conversationContext.isEmpty ? "" : "CONVERSATION CONTEXT:\n\(conversationContext)\n\n")
+        RESPONSE INSTRUCTIONS:
         
-        \(personaRules.isEmpty ? "" : "PERSONA BEHAVIORAL RULES:\n\(personaRules)\n\n")
+        \(dualTaskInstructions)
+        
+        \(omniscientContext.isEmpty ? "" : "OMNISCIENT CONTEXT:\n\(omniscientContext)\n\n")
         
         USER MESSAGE:
         \(userMessage)
         
-        RESPONSE INSTRUCTIONS:
-        
-        You must complete TWO SEPARATE tasks:
-        
-        STEP 1: Respond authentically as the persona
-        - Follow your cognitive role and thinking lens completely
-        - Give your natural response with complete personality
-        - This is your authentic voice responding to Boss
-        
-        STEP 2: Apply machine compression (completely separate task)
-        - Compress the ENTIRE conversation turn (Boss's message + your response from Step 1)
-        - Use the compression methodology provided below
-        - This is archival work, not response work
-        
-        Format your response EXACTLY as shown:
-        
-        ---MAIN_RESPONSE---
-        [Your complete, authentic response as the persona - full personality, natural length]
-        
-        ---MACHINE_TRIM---
-        [Compress the complete conversation turn (Boss message + your main response above) using methodology below]
-        
         COMPRESSION METHODOLOGY:
         \(compressionRules)
-        
-        CRITICAL: Step 1 and Step 2 are completely separate. Your main response should be authentic and natural. The compression is a separate archival task applied to the complete conversational exchange.
         """
     }
     
@@ -154,6 +131,28 @@ class LLMManager: ObservableObject {
         
         // Load behavioral rules from PersonaRegistry
         return registry.behaviorRules(for: persona) ?? ""
+    }
+    
+    /// Load dual-task instructions from vault tools
+    /// ROBUST: Handles missing instructions file gracefully
+    private func loadDualTaskInstructions() throws -> String {
+        let instructionsPath = "\(VaultConfig.vaultRoot)/playbook/tools/dual-task-instructions.md"
+        
+        do {
+            let content = try String(contentsOfFile: instructionsPath, encoding: .utf8)
+            print("✅ Loaded dual-task instructions")
+            return content
+        } catch {
+            print("❌ Failed to load dual-task instructions: \(error)")
+            // Fallback to basic instructions
+            return """
+            Complete TWO tasks:
+            1. Respond as persona
+            2. Compress the conversation turn
+            
+            Format: ---MAIN_RESPONSE--- then ---MACHINE_TRIM---
+            """
+        }
     }
     
     /// Load machine compression methodology from vault tools

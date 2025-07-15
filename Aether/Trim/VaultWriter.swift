@@ -31,7 +31,11 @@ import Foundation
 // MARK: - String Extension for Regex
 extension String {
     func matches(_ pattern: String) -> Bool {
-        let regex = try! NSRegularExpression(pattern: pattern)
+        // SAFETY: Handle regex creation errors gracefully
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            print("⚠️ Invalid regex pattern: \(pattern)")
+            return false
+        }
         let range = NSRange(location: 0, length: self.utf16.count)
         return regex.firstMatch(in: self, options: [], range: range) != nil
     }
@@ -60,6 +64,22 @@ class VaultWriter: ObservableObject {
         } else if lowercased.hasPrefix("add ") {
             let content = String(message.dropFirst(4)) // Remove "add "
             return appendToFile(content: content)
+        } else if lowercased == "process trims" {
+            // Trigger machine trim processing
+            Task {
+                await processSuperJournalToTrims()
+            }
+            return "🔄 Started machine trim processing for all superjournal files..."
+        } else if lowercased == "reprocess trims" {
+            // Clear existing journal files and regenerate
+            Task {
+                await reprocessAllTrims()
+            }
+            return "🔄 Clearing existing journal files and regenerating with improved prompts..."
+        } else if lowercased == "clear scrollback" {
+            // This needs to be handled by MessageStore, not VaultWriter
+            // Return a special marker that MessageStore can detect
+            return "CLEAR_SCROLLBACK_COMMAND"
         }
         
         return nil // No write command detected
@@ -268,8 +288,11 @@ class VaultWriter: ObservableObject {
                 // Preserve original creation and modification dates
                 try FileManager.default.setAttributes(originalAttributes, ofItemAtPath: newFilePath)
                 
-                // Remove old file
-                try FileManager.default.removeItem(atPath: oldFilePath)
+                // SAFETY: Move old file to trash instead of deleting
+                let trashFilename = "migrated-\(createTimestamp())-\(filename)"
+                let trashPath = "\(VaultConfig.trashPath)/\(trashFilename)"
+                try FileManager.default.moveItem(atPath: oldFilePath, toPath: trashPath)
+                print("🗑️ Moved old file to trash: \(trashFilename)")
                 
                 print("📝 Migrated: \(filename) → \(newFilename)")
                 migratedCount += 1
@@ -282,121 +305,83 @@ class VaultWriter: ObservableObject {
         print("✅ Migrated \(migratedCount) superjournal files")
     }
     
-    /// Manually fix superjournal timestamps with realistic fake timeline
-    /// PURPOSE: Fix the messed up creation dates from migration
-    /// APPROACH: Assign realistic timestamps starting 9am today, 40-75 seconds apart
-    func fixSuperjournalTimestamps() {
-        print("🔧 Manually fixing superjournal timestamps...")
-        
-        // Clean up existing files first
-        cleanupSuperjournalFiles()
-        
-        // Get conversation history in correct order
-        let memoryIndex = ContextMemoryIndex.shared
-        let messages = memoryIndex.getConversationHistory()
-        
-        print("📊 Found \(messages.count) total messages in conversation history")
-        
-        // Debug: count actual turns
-        let turnCount = countConversationTurns(messages)
-        print("📊 Calculated \(turnCount) conversation turns from messages")
-        
-        // Create realistic timeline starting at 9am today
-        let calendar = Calendar.current
-        let today = Date()
-        let startTime = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: today)!
-        
-        var currentTime = startTime
-        var fixedCount = 0
-        
-        // Process conversation turns
-        var userMessage: String?
-        
-        for message in messages {
-            if message.author == "User" {
-                userMessage = message.content
-            } else if message.author == "AI", let user = userMessage {
-                // Create realistic timestamp for this turn
-                let timestamp = formatTimestamp(currentTime)
-                let (userLabel, aiLabel) = parsePersonasFromUserMessage(user)
-                
-                // Create filename
-                let filename = "FullTurn-\(timestamp).md"
-                let filePath = "\(VaultConfig.superJournalPath)/\(filename)"
-                
-                // Create content with proper headers and timing
-                let content = createRealisticSuperjournalContent(
-                    userMessage: user,
-                    aiResponse: message.content,
-                    timestamp: timestamp,
-                    userLabel: userLabel,
-                    aiLabel: aiLabel
-                )
-                
-                do {
-                    // Write file with proper content
-                    try content.write(toFile: filePath, atomically: true, encoding: .utf8)
-                    
-                    // Set filesystem timestamps to match our fake timeline
-                    let attributes: [FileAttributeKey: Any] = [
-                        .creationDate: currentTime,
-                        .modificationDate: currentTime
-                    ]
-                    try FileManager.default.setAttributes(attributes, ofItemAtPath: filePath)
-                    
-                    print("🕐 Fixed: \(filename) → \(formatReadableTime(currentTime))")
-                    fixedCount += 1
-                    
-                } catch {
-                    print("❌ Failed to fix \(filename): \(error)")
-                }
-                
-                // Advance time by 40-75 seconds randomly
-                let randomDelay = Int.random(in: 40...75)
-                currentTime = currentTime.addingTimeInterval(TimeInterval(randomDelay))
-                
-                userMessage = nil
-            }
+    // DANGEROUS FUNCTIONS REMOVED:
+    // - fixSuperjournalTimestamps() - Deleted all superjournal files during "cleanup"
+    // - cleanupSuperjournalFiles() - The destructive function that caused data loss
+    // These functions were removed to prevent future data loss incidents
+    
+    // MARK: - Safety Systems
+    
+    /// Create backup of file before destructive operations
+    /// SAFETY: Always backup before overwriting or modifying files
+    private func createBackup(of filePath: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            return true // No file to backup, operation is safe
         }
         
-        print("✅ Fixed \(fixedCount) superjournal timestamps with realistic timeline")
-    }
-    
-    /// Clean up existing superjournal files before fixing
-    private func cleanupSuperjournalFiles() {
-        print("🧹 Cleaning up existing superjournal files...")
+        let filename = URL(fileURLWithPath: filePath).lastPathComponent
+        let backupFilename = "backup-\(createTimestamp())-\(filename)"
+        let backupPath = "\(VaultConfig.trashPath)/\(backupFilename)"
         
         do {
-            let files = try FileManager.default.contentsOfDirectory(atPath: VaultConfig.superJournalPath)
-            let superjournalFiles = files.filter { $0.hasPrefix("FullTurn-") && $0.hasSuffix(".md") }
-            
-            for filename in superjournalFiles {
-                let filePath = "\(VaultConfig.superJournalPath)/\(filename)"
-                try FileManager.default.removeItem(atPath: filePath)
-            }
-            
-            print("🧹 Cleaned up \(superjournalFiles.count) files")
+            try FileManager.default.copyItem(atPath: filePath, toPath: backupPath)
+            print("💾 Created backup: \(backupFilename)")
+            return true
         } catch {
-            print("❌ Failed to cleanup superjournal files: \(error)")
+            print("❌ Failed to create backup for \(filename): \(error)")
+            return false
+        }
+    }
+    
+    /// Verify file integrity after write operations
+    /// SAFETY: Ensure file was written correctly and is readable
+    private func verifyFileIntegrity(at filePath: String, expectedContent: String) -> Bool {
+        do {
+            let writtenContent = try String(contentsOfFile: filePath, encoding: .utf8)
+            let isValid = writtenContent == expectedContent
+            if !isValid {
+                print("⚠️ File integrity check failed for: \(URL(fileURLWithPath: filePath).lastPathComponent)")
+            }
+            return isValid
+        } catch {
+            print("❌ Failed to verify file integrity: \(error)")
+            return false
         }
     }
     
     // MARK: - File Operations (Current Implementation)
     
     private func writeToFile(content: String) -> String {
+        let filePath = VaultConfig.notesFilePath
+        
+        // SAFETY: Create backup before overwriting
+        guard createBackup(of: filePath) else {
+            return "❌ Failed to create backup before writing - operation aborted for safety"
+        }
+        
         do {
-            let filePath = VaultConfig.notesFilePath
             try content.write(toFile: filePath, atomically: true, encoding: .utf8)
-            return "✅ Wrote to file: \(content)\n📁 Location: \(filePath)"
+            
+            // SAFETY: Verify file was written correctly
+            guard verifyFileIntegrity(at: filePath, expectedContent: content) else {
+                return "❌ File integrity check failed after write - please check file manually"
+            }
+            
+            return "✅ Wrote to file: \(content)\n📁 Location: \(filePath)\n💾 Backup created in trash folder"
         } catch {
             return "❌ Failed to write file: \(error.localizedDescription)"
         }
     }
     
     private func appendToFile(content: String) -> String {
+        let filePath = VaultConfig.notesFilePath
+        
+        // SAFETY: Create backup before modifying
+        guard createBackup(of: filePath) else {
+            return "❌ Failed to create backup before appending - operation aborted for safety"
+        }
+        
         do {
-            let filePath = VaultConfig.notesFilePath
-            
             // Read existing content if file exists
             var existingContent = ""
             if FileManager.default.fileExists(atPath: filePath) {
@@ -407,7 +392,13 @@ class VaultWriter: ObservableObject {
             let newContent = existingContent.isEmpty ? content : existingContent + "\n" + content
             
             try newContent.write(toFile: filePath, atomically: true, encoding: .utf8)
-            return "✅ Added to file: \(content)\n📁 Location: \(filePath)"
+            
+            // SAFETY: Verify file was written correctly
+            guard verifyFileIntegrity(at: filePath, expectedContent: newContent) else {
+                return "❌ File integrity check failed after append - please check file manually"
+            }
+            
+            return "✅ Added to file: \(content)\n📁 Location: \(filePath)\n💾 Backup created in trash folder"
         } catch {
             return "❌ Failed to add to file: \(error.localizedDescription)"
         }
@@ -532,7 +523,13 @@ class VaultWriter: ObservableObject {
     private func extractTimestampFromOldFilename(_ filename: String) -> String {
         // Extract from format like "FullTurn-2025-07-14-0703.md"
         let pattern = "FullTurn-(\\d{4})-(\\d{2})-(\\d{2})-(\\d{4})\\.md"
-        let regex = try! NSRegularExpression(pattern: pattern)
+        
+        // SAFETY: Handle regex creation errors gracefully
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            print("⚠️ Invalid regex pattern in extractTimestampFromOldFilename: \(pattern)")
+            return createTimestamp()
+        }
+        
         let range = NSRange(location: 0, length: filename.utf16.count)
         
         if let match = regex.firstMatch(in: filename, options: [], range: range) {
@@ -549,6 +546,7 @@ class VaultWriter: ObservableObject {
         }
         
         // Fallback to current time if parsing fails
+        print("⚠️ Failed to parse timestamp from filename: \(filename)")
         return createTimestamp()
     }
     
@@ -597,7 +595,13 @@ class VaultWriter: ObservableObject {
         
         // Update timestamp in title if present
         let titlePattern = "# Full Conversation Turn - [^\n]+"
-        let titleRegex = try! NSRegularExpression(pattern: titlePattern)
+        
+        // SAFETY: Handle regex creation errors gracefully
+        guard let titleRegex = try? NSRegularExpression(pattern: titlePattern) else {
+            print("⚠️ Invalid regex pattern in updatePersonaHeaders: \(titlePattern)")
+            return updatedContent
+        }
+        
         let titleRange = NSRange(location: 0, length: updatedContent.utf16.count)
         
         if titleRegex.firstMatch(in: updatedContent, options: [], range: titleRange) != nil {
@@ -643,6 +647,180 @@ class VaultWriter: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: date)
+    }
+    
+    // MARK: - Machine Trim Batch Processing
+    
+    /// Clear existing journal files and regenerate all trims
+    /// SAFETY: Moves existing journal files to trash, then regenerates
+    func reprocessAllTrims() async {
+        print("🧹 Clearing existing journal files...")
+        
+        // Move existing journal files to trash
+        do {
+            let journalFiles = try FileManager.default.contentsOfDirectory(atPath: VaultConfig.journalPath)
+            let trimFiles = journalFiles.filter { $0.hasPrefix("Trim-") && $0.hasSuffix(".md") }
+            
+            for filename in trimFiles {
+                let sourcePath = "\(VaultConfig.journalPath)/\(filename)"
+                let trashPath = "\(VaultConfig.trashPath)/reprocess-\(createTimestamp())-\(filename)"
+                try FileManager.default.moveItem(atPath: sourcePath, toPath: trashPath)
+                print("🗑️ Moved to trash: \(filename)")
+            }
+            
+            print("✅ Cleared \(trimFiles.count) existing journal files")
+        } catch {
+            print("❌ Error clearing journal files: \(error)")
+        }
+        
+        // Now regenerate all trims with improved prompts
+        await processSuperJournalToTrims()
+    }
+    
+    /// Process all superjournal files into machine trims
+    /// SAFETY: Read-only on superjournal files, atomic operations per file
+    func processSuperJournalToTrims() async {
+        print("🔄 Starting machine trim processing for all superjournal files...")
+        
+        let superjournalFiles = getSuperJournalFiles().sorted() // Process in chronological order
+        print("📊 Found \(superjournalFiles.count) superjournal files to process")
+        
+        var successCount = 0
+        var failureCount = 0
+        
+        for filename in superjournalFiles {
+            print("🔄 Processing: \(filename)")
+            
+            let success = await processSingleSuperjournalFile(filename)
+            if success {
+                successCount += 1
+                print("✅ Completed: \(filename)")
+            } else {
+                failureCount += 1
+                print("❌ Failed: \(filename)")
+            }
+        }
+        
+        print("🎉 Machine trim processing complete!")
+        print("✅ Success: \(successCount) files")
+        print("❌ Failed: \(failureCount) files")
+    }
+    
+    /// Process a single superjournal file into machine trim
+    /// SAFETY: Read-only on original file, atomic operation
+    private func processSingleSuperjournalFile(_ filename: String) async -> Bool {
+        let superjournalPath = "\(VaultConfig.superJournalPath)/\(filename)"
+        
+        // Extract timestamp for journal filename
+        let timestamp = extractTimestampFromSuperjournalFilename(filename)
+        let journalFilename = "Trim-\(convertTimestampForJournal(timestamp)).md"
+        let journalPath = "\(VaultConfig.journalPath)/\(journalFilename)"
+        
+        // Skip if journal file already exists
+        if FileManager.default.fileExists(atPath: journalPath) {
+            print("⏭️ Skipping \(filename) - journal file already exists")
+            return true
+        }
+        
+        do {
+            // SAFETY: Read-only operation on superjournal file
+            let content = try String(contentsOfFile: superjournalPath, encoding: .utf8)
+            let (userMessage, aiResponse) = parseSuperjournalContent(content)
+            
+            guard !userMessage.isEmpty && !aiResponse.isEmpty else {
+                print("⚠️ Could not parse content from \(filename)")
+                return false
+            }
+            
+            // Get machine trim from LLM
+            let trimmedContent = try await generateMachineTrim(userMessage: userMessage, aiResponse: aiResponse)
+            
+            // Write to journal (atomic operation)
+            try trimmedContent.write(toFile: journalPath, atomically: true, encoding: .utf8)
+            
+            return true
+            
+        } catch {
+            print("❌ Error processing \(filename): \(error)")
+            return false
+        }
+    }
+    
+    /// Extract timestamp from superjournal filename
+    private func extractTimestampFromSuperjournalFilename(_ filename: String) -> String {
+        // From "FullTurn-20250715-090000.md" to "20250715-090000"
+        let pattern = "FullTurn-(\\d{8}-\\d{6})\\.md"
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            print("⚠️ Invalid regex pattern for superjournal filename")
+            return createTimestamp()
+        }
+        
+        let range = NSRange(location: 0, length: filename.utf16.count)
+        if let match = regex.firstMatch(in: filename, options: [], range: range) {
+            return (filename as NSString).substring(with: match.range(at: 1))
+        }
+        
+        return createTimestamp()
+    }
+    
+    /// Parse superjournal content into user message and AI response
+    private func parseSuperjournalContent(_ content: String) -> (userMessage: String, aiResponse: String) {
+        let lines = content.components(separatedBy: .newlines)
+        var userMessage = ""
+        var aiResponse = ""
+        var currentSection = ""
+        
+        for line in lines {
+            if line.hasPrefix("## Boss") {
+                currentSection = "user"
+                continue
+            } else if line.hasPrefix("## Aether") || line.hasPrefix("## Samara") || line.hasPrefix("## Vlad") || line.hasPrefix("## Vanessa") {
+                currentSection = "ai"
+                continue
+            } else if line.hasPrefix("---") || line.hasPrefix("*End of turn*") || line.hasPrefix("#") {
+                currentSection = ""
+                continue
+            }
+            
+            if currentSection == "user" && !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !userMessage.isEmpty { userMessage += "\n" }
+                userMessage += line
+            } else if currentSection == "ai" && !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !aiResponse.isEmpty { aiResponse += "\n" }
+                aiResponse += line
+            }
+        }
+        
+        return (userMessage.trimmingCharacters(in: .whitespacesAndNewlines), 
+                aiResponse.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    
+    /// Generate machine trim using LLM
+    private func generateMachineTrim(userMessage: String, aiResponse: String) async throws -> String {
+        // Load machine trim instructions
+        let machineTrimPath = "\(VaultConfig.vaultRoot)/playbook/tools/machine-trim.md"
+        let trimInstructions = try String(contentsOfFile: machineTrimPath, encoding: .utf8)
+        
+        // Build comprehensive prompt that includes methodology AND asks Samara to compress
+        let prompt = """
+        Samara, I need you to apply machine compression to this historical conversation turn. Use the methodology below exactly.
+        
+        HISTORICAL CONVERSATION TURN:
+        Boss: \(userMessage)
+        AI: \(aiResponse)
+        
+        MACHINE TRIM METHODOLOGY:
+        \(trimInstructions)
+        
+        Apply this compression methodology to the conversation turn above. Output ONLY the compressed machine trim in the exact format specified - no additional explanation or response.
+        """
+        
+        // Use Samara persona to apply machine trimming methodology
+        let personaResponse = try await llmManager.sendMessage(prompt, persona: "samara")
+        
+        // Return Samara's main response (which should be the machine trim)
+        return personaResponse.mainResponse
     }
     
     // MARK: - Future Blueprint Implementation
