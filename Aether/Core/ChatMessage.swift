@@ -37,23 +37,57 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     let content: String
     let author: String
     let timestamp: Date
+    let persona: String? // Optional persona identifier for new persona system
     
     // CREATION INITIALIZER: New message from user input or LLM start
     // Used by: MessageStore.addUserMessage(), MessageStore.startStreamingMessage()
-    init(content: String, author: String) {
+    init(content: String, author: String, persona: String? = nil) {
         self.id = UUID()
         self.content = content
         self.author = author
         self.timestamp = Date()
+        self.persona = persona
     }
     
     // UPDATE INITIALIZER: Streaming content updates with UUID preservation
     // Used by: MessageStore.updateStreamingMessage() for real-time LLM responses
     // CRITICAL: Preserves original ID, author, and timestamp during content updates
-    init(id: UUID, content: String, author: String, timestamp: Date) {
+    init(id: UUID, content: String, author: String, timestamp: Date, persona: String? = nil) {
         self.id = id
         self.content = content
         self.author = author
         self.timestamp = timestamp
+        self.persona = persona
+    }
+    
+    // COMPUTED PROPERTIES: Persona system integration
+    
+    /// Returns true if message is from Boss (no persona or explicit "boss" persona)
+    var isFromBoss: Bool {
+        return persona == nil || persona == "boss"
+    }
+    
+    /// Returns persona ID for PersonaRegistry lookup
+    /// For existing messages: "AI" author becomes "aether" (origin story)
+    /// For new messages: Uses persona field directly
+    /// Note: Actual display name resolution happens in UI components via PersonaRegistry
+    var personaDisplayName: String {
+        // Handle Boss messages
+        if isFromBoss {
+            return "boss"
+        }
+        
+        // Handle existing messages - "AI" author becomes "aether" (origin story)
+        if author == "AI" && persona == nil {
+            return "aether"
+        }
+        
+        // Handle new persona messages - return persona ID for lookup
+        if let personaId = persona {
+            return personaId
+        }
+        
+        // Fallback for unknown cases
+        return author.lowercased()
     }
 }

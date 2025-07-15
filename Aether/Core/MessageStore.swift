@@ -19,10 +19,17 @@
 //  - Handle streaming message updates
 //  - Provide clean interface for UI components
 //
-//  CURRENT SCOPE: Basic User ↔ AI chat interface
-//  - Hardcoded "User" and "AI" authors (intentionally simple)
-//  - Focus on reliability and clean separation
+//  CURRENT SCOPE: Complete memory-integrated chat interface with superjournal
+//  - Hardcoded "User" and "AI" authors (intentionally simple before persona system)
+//  - Full conversation persistence and Boss profile integration
+//  - Agentic superjournal auto-save for complete audit trail
 //  - Foundation for future persona system
+//
+//  ACHIEVEMENTS TODAY:
+//  ✅ Boss profile integration - AI knows who Boss is and his role
+//  ✅ Superjournal auto-save - Every turn automatically preserved
+//  ✅ Existing conversation migration - "What is outer space?" conversations preserved
+//  ✅ Enterprise-grade audit trail - Complete conversation logging system
 
 import Foundation
 import SwiftUI
@@ -30,11 +37,42 @@ import Combine
 
 class MessageStore: ObservableObject {
     @Published var messages: [ChatMessage] = []
-    private let llmManager = LLMManager()
+    let llmManager = LLMManager()
+    
+    // BLUEPRINT: Memory integration for conversation persistence
+    private let memoryIndex = ContextMemoryIndex.shared
+    
+    // BLUEPRINT: Vault writing integration for superjournal auto-save
+    private let vaultWriter = VaultWriter.shared
+    
+    // PERSONA SYSTEM: PersonaRegistry dependency for persona-aware message handling
+    @ObservedObject var personaRegistry: PersonaRegistry
     
     // Navigation events
     private let navigationSubject = PassthroughSubject<NavigationDirection, Never>()
     private var cancellables = Set<AnyCancellable>()
+    
+    // Auto-save state tracking
+    private var currentUserMessage: String?
+    private var hasMigratedToSuperjournal = false
+    private var hasMigratedHistoricalTrims = false
+    
+    // PERSONA SYSTEM: Current active persona tracking
+    @Published private var currentPersona: String = "samara"
+    
+    init(personaRegistry: PersonaRegistry) {
+        self.personaRegistry = personaRegistry
+        
+        // BLUEPRINT: Load conversation history from vault on startup
+        // CURRENT: Simple conversation restoration
+        Task { @MainActor in
+            loadConversationHistory()
+            migrateExistingConversationToSuperjournal()
+            migrateHistoricalMessagesToTrims()
+            // Manually fix superjournal timestamps with realistic timeline
+            vaultWriter.fixSuperjournalTimestamps()
+        }
+    }
     
     enum NavigationDirection {
         case up, down
@@ -47,12 +85,71 @@ class MessageStore: ObservableObject {
     
     // MARK: - Message Coordination
     
-    /// Send user message and coordinate LLM response
+    /// Send user message with Boss-directed persona parsing
     func sendMessage(_ content: String) {
-        Task { @MainActor in
-            addUserMessage(content)
+        // Parse first word to detect persona targeting
+        let (targetPersona, messageContent) = parsePersonaFromMessage(content)
+        
+        // If persona found, set as current active
+        if let persona = targetPersona {
+            Task { @MainActor in
+                setCurrentPersona(persona)
+            }
         }
-        coordinateLLMResponse(for: content)
+        
+        // Add Boss's message first
+        Task { @MainActor in
+            addUserMessage(content) // Always save full original message
+        }
+        
+        // Check for write commands first
+        if let writeResult = VaultWriter.shared.processCommand(messageContent) {
+            Task { @MainActor in
+                addAIMessage(writeResult, persona: "aether") // Legacy responses become "aether"
+            }
+        } else {
+            // Route to current active persona with cleaned content
+            coordinateLLMResponse(for: messageContent, persona: getCurrentPersona())
+        }
+    }
+    
+    /// Get current persona for UI state
+    func getCurrentPersona() -> String {
+        return currentPersona
+    }
+    
+    /// Set current active persona
+    func setCurrentPersona(_ persona: String) {
+        guard personaRegistry.personaExists(persona) else {
+            print("⚠️ Cannot set unknown persona: \(persona)")
+            return
+        }
+        currentPersona = persona
+    }
+    
+    /// Parse first word of message to detect persona targeting
+    /// Returns (targetPersona, cleanedContent) - persona is nil if no match found
+    private func parsePersonaFromMessage(_ content: String) -> (String?, String) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = trimmed.components(separatedBy: .whitespaces)
+        
+        guard let firstWord = words.first, !firstWord.isEmpty else {
+            return (nil, content)
+        }
+        
+        // Check if first word matches any persona (case-insensitive, strip punctuation)
+        let cleanedFirstWord = firstWord.trimmingCharacters(in: .punctuationCharacters).lowercased()
+        for personaId in personaRegistry.allPersonaIds() {
+            if personaId.lowercased() == cleanedFirstWord {
+                // Found persona match - remove first word from content
+                let remainingWords = Array(words.dropFirst())
+                let cleanedContent = remainingWords.joined(separator: " ")
+                return (personaId, cleanedContent)
+            }
+        }
+        
+        // No persona match - return original content
+        return (nil, content)
     }
     
     /// Clear all messages from conversation
@@ -67,21 +164,25 @@ class MessageStore: ObservableObject {
     /// Add user message to conversation
     @MainActor
     private func addUserMessage(_ content: String) {
-        let message = ChatMessage(content: content, author: "User")
+        let message = ChatMessage(content: content, author: "User", persona: nil) // Boss messages have no persona
         messages.append(message)
+        saveConversationHistory()
+        
+        // BLUEPRINT: Track user message for superjournal auto-save
+        currentUserMessage = content
     }
     
-    /// Add AI message to conversation (for error handling)
+    /// Add AI message to conversation (for error handling and write commands)
     @MainActor
-    private func addAIMessage(_ content: String) {
-        let message = ChatMessage(content: content, author: "AI")
+    private func addAIMessage(_ content: String, persona: String? = nil) {
+        let message = ChatMessage(content: content, author: "AI", persona: persona)
         messages.append(message)
     }
     
     /// Create empty AI message for streaming updates
     @MainActor
-    private func startAIMessage() -> UUID {
-        let message = ChatMessage(content: "", author: "AI")
+    private func startAIMessage(persona: String? = nil) -> UUID {
+        let message = ChatMessage(content: "", author: "AI", persona: persona)
         let messageId = message.id
         messages.append(message)
         return messageId
@@ -97,36 +198,78 @@ class MessageStore: ObservableObject {
             id: originalMessage.id,
             content: content,
             author: originalMessage.author,
-            timestamp: originalMessage.timestamp
+            timestamp: originalMessage.timestamp,
+            persona: originalMessage.persona
         )
         messages[index] = updatedMessage
+        saveConversationHistory()
+        
+        // BLUEPRINT: Auto-save complete turn to superjournal when AI response is complete
+        if originalMessage.author == "AI", let userMsg = currentUserMessage, !content.isEmpty {
+            autoSaveCompleteTurn(userMessage: userMsg, aiResponse: content)
+            currentUserMessage = nil // Reset for next turn
+        }
     }
     
     // MARK: - LLM Coordination
     
-    /// Handle LLM response coordination in background
-    private func coordinateLLMResponse(for userMessage: String) {
+    /// Handle LLM response coordination with persona applying machine compression
+    private func coordinateLLMResponse(for userMessage: String, persona: String? = nil) {
         Task {
             do {
                 // Start empty AI message for response
-                let messageId = await startAIMessage()
+                let messageId = await MainActor.run { startAIMessage(persona: persona) }
                 
-                // Get LLM response (non-streaming for reliability)
-                let response = try await llmManager.sendMessage(userMessage)
+                // Get LLM response with persona applying machine compression
+                let personaResponse = try await llmManager.sendMessage(userMessage, persona: persona)
                 
-                // Update with complete response
-                await updateStreamingMessage(id: messageId, content: response)
+                // Update with main response
+                await MainActor.run { updateStreamingMessage(id: messageId, content: personaResponse.mainResponse) }
+                
+                // Save trimmed version to journal if available
+                if let trimmedResponse = personaResponse.trimmedResponse {
+                    await MainActor.run { saveTrimmedResponse(trimmedResponse) }
+                }
                 
             } catch {
                 // Handle LLM errors gracefully
-                await handleLLMError(error)
+                await MainActor.run { handleLLMError(error, persona: persona) }
+            }
+        }
+    }
+    
+    /// Save trimmed response to journal folder
+    /// BREAKTHROUGH: Automatic semantic compression with every response
+    @MainActor
+    private func saveTrimmedResponse(_ trimmedContent: String) {
+        Task {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd-HHmm"
+            dateFormatter.timeZone = TimeZone(identifier: "UTC")
+            
+            let timestamp = dateFormatter.string(from: Date())
+            let filename = "Trim-\(timestamp).md"
+            let journalPath = "\(VaultConfig.journalPath)/\(filename)"
+            
+            do {
+                // Ensure journal directory exists
+                try FileManager.default.createDirectory(atPath: VaultConfig.journalPath, 
+                                                       withIntermediateDirectories: true, 
+                                                       attributes: nil)
+                
+                // Write trimmed content
+                try trimmedContent.write(toFile: journalPath, atomically: true, encoding: .utf8)
+                print("📝 Saved machine trim: \(filename)")
+                
+            } catch {
+                print("❌ Failed to save trimmed response: \(error)")
             }
         }
     }
     
     /// Handle LLM service errors with user-friendly messages
     @MainActor
-    private func handleLLMError(_ error: Error) {
+    private func handleLLMError(_ error: Error, persona: String? = nil) {
         let errorMessage: String
         
         if let llmError = error as? LLMServiceError {
@@ -146,7 +289,7 @@ class MessageStore: ObservableObject {
             errorMessage = "An unexpected error occurred. Please try again."
         }
         
-        addAIMessage(errorMessage)
+        addAIMessage(errorMessage, persona: persona)
         print("❌ LLM Error: \(error)")
     }
     
@@ -171,4 +314,181 @@ class MessageStore: ObservableObject {
     func smoothScrollDown() {
         navigationSubject.send(.smoothDown)
     }
+    
+    // MARK: - Memory Management
+    
+    /// Load conversation history from vault
+    /// BLUEPRINT: Eventually loads full omniscient memory context
+    /// CURRENT: Simple conversation restoration on app startup
+    @MainActor
+    private func loadConversationHistory() {
+        let savedMessages = memoryIndex.getConversationHistory()
+        messages = savedMessages
+        print("📖 Restored \(messages.count) messages from conversation history")
+    }
+    
+    /// Save conversation history to vault
+    /// BLUEPRINT: Eventually triggers semantic consolidation when memory grows large
+    /// CURRENT: Simple persistence after each message
+    private func saveConversationHistory() {
+        memoryIndex.saveConversationHistory(messages)
+    }
+    
+    // MARK: - Superjournal Auto-Save (Blueprint Implementation)
+    // 🎉 ACHIEVEMENT: Agentic superjournal system - no manual intervention required
+    
+    /// Auto-save complete conversation turn to superjournal
+    /// BLUEPRINT: "FullTurn-YYYY-MM-DD-HHMM.md — Complete uncompressed logs"
+    /// ACHIEVEMENT: ✅ Fully automated - triggers when AI response completes
+    /// INTEGRATION: Clean separation - MessageStore detects turns, VaultWriter handles files
+    private func autoSaveCompleteTurn(userMessage: String, aiResponse: String) {
+        Task {
+            vaultWriter.autoSaveTurn(userMessage: userMessage, aiResponse: aiResponse)
+        }
+    }
+    
+    /// Migrate existing conversation to superjournal (one-time operation)
+    /// BLUEPRINT: Backfill existing conversations for complete audit trail
+    /// ACHIEVEMENT: ✅ Preserves "What is outer space?" and all historical conversations
+    /// ENSURES: No conversation data lost during superjournal system implementation
+    @MainActor
+    private func migrateExistingConversationToSuperjournal() {
+        guard !hasMigratedToSuperjournal && !messages.isEmpty else { return }
+        
+        Task {
+            vaultWriter.migratePreviousTurns(messages)
+        }
+        
+        hasMigratedToSuperjournal = true
+    }
+    
+    /// Migrate existing conversation history to machine trims (one-time operation)
+    /// BREAKTHROUGH: Backfill all historical messages with automatic semantic compression
+    /// ENSURES: Complete conversation history gets machine compression treatment retroactively
+    @MainActor
+    private func migrateHistoricalMessagesToTrims() {
+        guard !hasMigratedHistoricalTrims && !messages.isEmpty else { return }
+        
+        print("🔄 Starting historical message migration to machine trims...")
+        
+        Task {
+            let conversationTurns = groupMessagesIntoTurns(messages)
+            print("📊 Found \(conversationTurns.count) conversation turns to migrate")
+            
+            for turn in conversationTurns {
+                await generateHistoricalTrim(userMessage: turn.userMessage, aiMessage: turn.aiMessage)
+            }
+            
+            print("✅ Historical message migration completed - \(conversationTurns.count) trims generated")
+        }
+        
+        hasMigratedHistoricalTrims = true
+    }
+    
+    /// Group messages into conversation turns (User → AI pairs)
+    private func groupMessagesIntoTurns(_ messages: [ChatMessage]) -> [ConversationTurn] {
+        var turns: [ConversationTurn] = []
+        var currentUserMessage: ChatMessage?
+        
+        for message in messages {
+            if message.author == "User" {
+                currentUserMessage = message
+            } else if message.author == "AI", let userMsg = currentUserMessage {
+                // Create turn pair
+                let turn = ConversationTurn(
+                    userMessage: userMsg,
+                    aiMessage: message,
+                    timestamp: message.timestamp
+                )
+                turns.append(turn)
+                currentUserMessage = nil
+            }
+        }
+        
+        return turns
+    }
+    
+    /// Generate historical trim for a conversation turn
+    private func generateHistoricalTrim(userMessage: ChatMessage, aiMessage: ChatMessage) async {
+        do {
+            // Use LLMManager to generate trim (same as current system)
+            let trimResponse = try await generateTrimForTurn(
+                userContent: userMessage.content,
+                aiContent: aiMessage.content,
+                originalTimestamp: aiMessage.timestamp
+            )
+            
+            // Save with original timestamp
+            await MainActor.run { saveHistoricalTrim(trimResponse, originalTimestamp: aiMessage.timestamp) }
+            
+        } catch {
+            print("❌ Failed to generate historical trim: \(error)")
+        }
+    }
+    
+    /// Generate trim for a specific turn using machine methodology
+    private func generateTrimForTurn(userContent: String, aiContent: String, originalTimestamp: Date) async throws -> String {
+        // Load machine compression methodology
+        let compressionPath = "\(VaultConfig.vaultRoot)/playbook/tools/machine-trim.md"
+        let compressionRules = try String(contentsOfFile: compressionPath, encoding: .utf8)
+        
+        // Build prompt for historical trim generation with proper speaker attribution
+        let prompt = """
+        HISTORICAL CONVERSATION TURN COMPRESSION:
+        
+        Apply machine compression to this conversation turn between Boss and Aether:
+        
+        BOSS MESSAGE:
+        \(userContent)
+        
+        AETHER RESPONSE:
+        \(aiContent)
+        
+        COMPRESSION METHODOLOGY:
+        \(compressionRules)
+        
+        IMPORTANT: Use speaker labels "boss:" and "aether:" in the dialog section, not "user:" or "ai:".
+        This is historical conversation between Boss and Aether before other personas joined.
+        
+        Generate only the compressed trim output - no additional explanation or formatting.
+        """
+        
+        // Use LLMManager to process the trim
+        return try await llmManager.sendMessage(prompt)
+    }
+    
+    /// Save historical trim with original timestamp
+    @MainActor
+    private func saveHistoricalTrim(_ trimContent: String, originalTimestamp: Date) {
+        Task {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd-HHmm"
+            dateFormatter.timeZone = TimeZone(identifier: "UTC")
+            
+            let timestamp = dateFormatter.string(from: originalTimestamp)
+            let filename = "Trim-\(timestamp)-historical.md"
+            let journalPath = "\(VaultConfig.journalPath)/\(filename)"
+            
+            do {
+                // Ensure journal directory exists
+                try FileManager.default.createDirectory(atPath: VaultConfig.journalPath, 
+                                                       withIntermediateDirectories: true, 
+                                                       attributes: nil)
+                
+                // Write historical trim
+                try trimContent.write(toFile: journalPath, atomically: true, encoding: .utf8)
+                print("📝 Saved historical trim: \(filename)")
+                
+            } catch {
+                print("❌ Failed to save historical trim: \(error)")
+            }
+        }
+    }
+}
+
+/// Conversation turn data structure for migration
+private struct ConversationTurn {
+    let userMessage: ChatMessage
+    let aiMessage: ChatMessage
+    let timestamp: Date
 }

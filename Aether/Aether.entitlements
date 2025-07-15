@@ -26,9 +26,17 @@
 	
 	<!-- FILE ACCESS: Vault Operations -->
 	<!-- Blueprint Section: 🚨 Vault - VaultWriter, VaultDeleter -->
-	<!-- Required for: aetherVault file operations, user file selection -->
+	<!-- Required for: aetherVault file operations, unrestricted file system access -->
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/</string>
+	</array>
 	
 	<!-- SYSTEM INTEGRATION: Terminal and Screen Capture -->
 	<!-- Blueprint Section: 🚨 Utilities - TerminalWatcher -->

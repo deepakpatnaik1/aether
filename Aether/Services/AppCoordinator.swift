@@ -25,7 +25,8 @@ import Combine
 @MainActor
 class AppCoordinator: ObservableObject {
     // Core services
-    let messageStore = MessageStore()
+    let personaRegistry = PersonaRegistry()
+    let messageStore: MessageStore
     let threePaneManager = ThreePaneManager()
     let focusManager = FocusManager()
     let textMeasurementService = TextMeasurementService()
@@ -37,6 +38,12 @@ class AppCoordinator: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     init() {
+        // Initialize MessageStore with PersonaRegistry dependency
+        messageStore = MessageStore(personaRegistry: personaRegistry)
+        
+        // Wire PersonaRegistry into LLMManager
+        messageStore.llmManager.setPersonaRegistry(personaRegistry)
+        
         setupDerivedServices()
         wireEventHandling()
         setupObservableObjectForwarding()

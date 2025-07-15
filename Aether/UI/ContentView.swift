@@ -89,6 +89,7 @@ struct ContentView: View {
         .environmentObject(appCoordinator.focusManager)
         .environmentObject(appCoordinator.textMeasurementService)
         .environmentObject(appCoordinator.scrollCoordinator)
+        .environmentObject(appCoordinator.personaRegistry)
         .background(
             Color(
                 red: DesignTokens.shared.background.primary.red,
