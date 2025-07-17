@@ -31,33 +31,31 @@ struct InputBarView: View {
     private let tokens = DesignTokens.shared
     
     init() {
-        _textHeight = State(initialValue: DesignTokens.shared.elements.inputBar.defaultTextHeight)
+        // Calculate the actual single-line height to match what updateTextHeight() produces
+        let font = NSFont(name: DesignTokens.shared.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
+        let lineHeight = font.ascender + abs(font.descender) + font.leading
+        // Use just the line height since padding is applied by the view layout
+        let singleLineTextHeight = lineHeight
+        _textHeight = State(initialValue: singleLineTextHeight)
     }
     
     var body: some View {
-        // Input Container - Glassmorphic design
+        // Input Container - Glassmorphic design with upward growth
         VStack(spacing: 0) {
-            // Expandable text area with placeholder
-            ZStack(alignment: .topLeading) {
-                // Placeholder text
-                if inputText.isEmpty {
-                    Text(tokens.elements.inputBar.placeholderText)
-                        .font(.custom(tokens.typography.bodyFont, size: tokens.elements.inputBar.fontSize))
-                        .foregroundColor(.white.opacity(tokens.glassmorphic.transparency.placeholder))
-                        .padding(.horizontal, tokens.elements.inputBar.placeholderPaddingHorizontal)
-                        .padding(.top, tokens.elements.inputBar.topPadding)
-                }
-                
-                TextEditor(text: $inputText)
+            // Expandable text area - grows upward by putting controls first
+            ZStack(alignment: .bottomLeading) {
+                TextField("", text: $inputText, axis: .vertical)
                     .font(.custom(tokens.typography.bodyFont, size: 12))
                     .foregroundColor(.white)
                     .focused($isInputFocused)
-                    .scrollContentBackground(.hidden)
-                    .scrollDisabled(true)
+                    .textFieldStyle(PlainTextFieldStyle())
                     .frame(height: textHeight)
                     .padding(.horizontal, tokens.elements.inputBar.textPadding)
                     .padding(.top, tokens.elements.inputBar.topPadding)
                     .padding(.bottom, tokens.elements.inputBar.topPadding)
+                    .onSubmit {
+                        // Handle regular Enter as new line (do nothing)
+                    }
                     .onKeyPress(keys: [.return]) { keyPress in
                         if keyPress.modifiers.contains(.command) {
                             sendMessage()
@@ -74,7 +72,7 @@ struct InputBarView: View {
             HStack(spacing: tokens.elements.inputBar.controlsSpacing) {
                 // Plus button
                 Button(action: {
-                    focusManager.requestInputFocus()
+                    // TODO: Add attachment functionality
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
@@ -83,13 +81,15 @@ struct InputBarView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 
+                // Model switcher
+                ModelSwitcher()
+                
                 Spacer()
                 
                 // Send button
                 if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: {
                         sendMessage()
-                        focusManager.requestInputFocus()
                     }) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: tokens.elements.buttons.sendSize, weight: .medium))
@@ -140,6 +140,8 @@ struct InputBarView: View {
                 )
         )
         .padding(.all, tokens.elements.inputBar.padding)
+        .frame(maxWidth: .infinity)
+        .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             isInputFocused = true
         }
@@ -149,17 +151,9 @@ struct InputBarView: View {
                 focusManager.clearFocusRequest()
             }
         }
-        .onChange(of: isInputFocused) { oldValue, newValue in
-            if !newValue && focusManager.appIsActive {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    focusManager.requestInputFocus()
-                }
-            }
-        }
-        .onTapGesture {
-            focusManager.requestInputFocus()
-        }
     }
+    
+    // Input bar grows upward while maintaining bottom alignment
     
     private func sendMessage() {
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -170,68 +164,22 @@ struct InputBarView: View {
     }
     
     private func handleTextChange(oldValue: String, newValue: String) {
-        // Detect paste operation (large text change) vs normal typing
-        let textDelta = abs(newValue.count - oldValue.count)
-        let isPaste = textDelta > 10 // Arbitrary threshold for paste detection
+        print("🔍 handleTextChange DEBUG:")
+        print("  - Old value: '\(oldValue.prefix(30))...'")
+        print("  - New value: '\(newValue.prefix(30))...'")
+        print("  - Length changed: \(oldValue.count) -> \(newValue.count)")
         
-        if isPaste {
-            // For paste operations, use fast simple calculation
-            handlePasteTextChange(newValue: newValue)
-        } else {
-            // For normal typing, use precise wrap detection
-            let didExpand = shouldExpandForWrap(oldValue: oldValue, newValue: newValue)
-            if didExpand {
-                // Expand immediately before TextEditor can scroll
-                let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
-                let lineHeight = font.ascender + abs(font.descender) + font.leading
-                let currentLines = getCurrentLineCount(for: newValue)
-                let estimatedHeight = CGFloat(currentLines) * lineHeight + tokens.elements.inputBar.topPadding * 2
-                let maxHeight = calculateMaximumCanvasHeight()
-                
-                textHeight = min(maxHeight, max(tokens.elements.inputBar.minHeight, estimatedHeight))
-            } else {
-                // Only do animated precise calculation if we didn't just expand
-                updateTextHeight(for: newValue)
-            }
-        }
+        // Always use line-based calculation for consistent behavior
+        updateTextHeight(for: newValue)
     }
     
-    private func handlePasteTextChange(newValue: String) {
-        // Fast, simple calculation for paste operations
-        let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
-        let lineHeight = font.ascender + abs(font.descender) + font.leading
-        
-        // Simple line count estimation (count \n + rough word wrapping estimate)
-        let explicitLines = newValue.components(separatedBy: .newlines).count
-        let estimatedHeight = CGFloat(explicitLines) * lineHeight + tokens.elements.inputBar.topPadding * 2
-        let maxHeight = calculateMaximumCanvasHeight()
-        
-        // Set height immediately without expensive measurement
-        textHeight = min(maxHeight, max(tokens.elements.inputBar.minHeight, estimatedHeight))
-    }
     
-    private func shouldExpandForWrap(oldValue: String, newValue: String) -> Bool {
-        // Only check if we added exactly one character (normal typing)
-        guard newValue.count == oldValue.count + 1 else { return false }
-        
-        let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
-        
-        // Calculate available width based on actual window width
-        let windowWidth = NSApplication.shared.windows.first?.frame.width ?? 400
-        let availableWidth: CGFloat = windowWidth - 64 // Container padding + text padding
-        
-        // Get the height of old vs new text when laid out
-        let oldHeight = measureTextHeight(for: oldValue, width: availableWidth, font: font)
-        let newHeight = measureTextHeight(for: newValue, width: availableWidth, font: font)
-        
-        // If the height increased, we wrapped to a new line
-        return newHeight > oldHeight
-    }
     
     private func getCurrentLineCount(for text: String) -> Int {
         let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
-        let windowWidth = NSApplication.shared.windows.first?.frame.width ?? 400
-        let availableWidth: CGFloat = windowWidth - 64
+        let contentWidth: CGFloat = tokens.layout.sizing["contentWidth"] ?? 592
+        let textFieldWidth = contentWidth - (tokens.elements.inputBar.textPadding * 2) - (tokens.elements.inputBar.padding * 2)
+        let availableWidth: CGFloat = textFieldWidth
         
         let height = measureTextHeight(for: text, width: availableWidth, font: font)
         let lineHeight = font.ascender + abs(font.descender) + font.leading
@@ -264,43 +212,45 @@ struct InputBarView: View {
     
     private func updateTextHeight(for text: String) {
         let font = NSFont(name: tokens.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
+        let lineHeight = font.ascender + abs(font.descender) + font.leading
         
-        // Calculate available width based on actual window width
-        let windowWidth = NSApplication.shared.windows.first?.frame.width ?? 400
-        let availableWidth: CGFloat = windowWidth - 64 // Container padding + text padding
+        // Calculate actual line count (including word wraps)
+        let actualLineCount = getCurrentLineCount(for: text)
         
-        // Use the actual text or a single character for measurement
-        let measureText = text.isEmpty ? "Ag" : text
-        
-        let attributedString = NSAttributedString(
-            string: measureText,
-            attributes: [
-                .font: font,
-                .paragraphStyle: {
-                    let style = NSMutableParagraphStyle()
-                    style.lineBreakMode = .byWordWrapping
-                    return style
-                }()
-            ]
-        )
-        
-        // Calculate bounding rect
-        let boundingRect = attributedString.boundingRect(
-            with: CGSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        
-        let calculatedHeight = ceil(boundingRect.height)
+        // Calculate maximum possible line count before we hit height limit
         let maxHeight = calculateMaximumCanvasHeight()
-        let newHeight = max(tokens.elements.inputBar.minHeight, min(maxHeight, calculatedHeight + 4)) // Add small buffer
+        let maxLineCount = Int(floor(maxHeight / lineHeight))
         
-        // Only animate if height actually changed to avoid unnecessary updates
-        if abs(textHeight - newHeight) > 1 {
+        // Cap the line count at the maximum - this prevents TextField from even trying to expand beyond this
+        let constrainedLineCount = min(actualLineCount, maxLineCount)
+        
+        // Calculate height based on constrained line count
+        let textHeight = CGFloat(constrainedLineCount) * lineHeight
+        let newHeight = textHeight
+        
+        print("🔍 updateTextHeight DEBUG:")
+        print("  - Text: '\(text.prefix(50))...'")
+        print("  - Actual line count: \(actualLineCount)")
+        print("  - Max line count: \(maxLineCount)")
+        print("  - Constrained line count: \(constrainedLineCount)")
+        print("  - Line height: \(lineHeight)")
+        print("  - Calculated text height: \(textHeight)")
+        print("  - Max height: \(maxHeight)")
+        print("  - New height: \(newHeight)")
+        print("  - Current height: \(self.textHeight)")
+        print("  - Height difference: \(abs(self.textHeight - newHeight))")
+        print("  - Will animate: \(abs(self.textHeight - newHeight) > 2)")
+        
+        // Update height with animation only if significantly different
+        if abs(self.textHeight - newHeight) > 2 {
             let springTokens = tokens.animations.paneTransition
-            // Faster, more responsive animation for immediate expansion
+            print("  - ANIMATING height change from \(self.textHeight) to \(newHeight)")
             withAnimation(.spring(response: springTokens.response * 0.5, dampingFraction: springTokens.dampingFraction, blendDuration: springTokens.blendDuration * 0.3)) {
-                textHeight = newHeight
+                self.textHeight = newHeight
             }
+        } else {
+            print("  - DIRECT height change from \(self.textHeight) to \(newHeight)")
+            self.textHeight = newHeight
         }
     }
     
@@ -309,20 +259,29 @@ struct InputBarView: View {
         guard let window = NSApplication.shared.windows.first else { return 800 }
         let windowHeight = window.frame.height
         
-        // Calculate spacing for equal margins from title bar (top margin = inputBar.padding from title bar)
+        // Calculate total input bar chrome (everything except the text area)
         let titleBarHeight: CGFloat = 28 // macOS title bar height
         let containerPadding: CGFloat = tokens.elements.inputBar.padding // Container padding (all sides)
         let controlsRowHeight: CGFloat = 32 // Bottom controls row height
-        let textInternalPadding: CGFloat = 24 // Text area internal padding (top + bottom)
+        let textInternalPadding: CGFloat = tokens.elements.inputBar.topPadding + tokens.elements.inputBar.topPadding // Text area internal padding (top + bottom)
         
-        // Total container overhead = top margin + container padding + controls + text padding + bottom margin
-        let topMarginAdjustment: CGFloat = 2 // Hair width reduction
-        let containerOverhead = (containerPadding - topMarginAdjustment) + containerPadding + controlsRowHeight + textInternalPadding + containerPadding
+        // Total chrome: title bar + container padding (top/bottom) + text internal padding + controls row
+        let totalChrome = titleBarHeight + (containerPadding * 2) + textInternalPadding + controlsRowHeight
         
-        // Available height for text area = window height - title bar - total container overhead
-        let availableTextHeight = windowHeight - titleBarHeight - containerOverhead
+        // Available height for text area to achieve perfect vertical symmetry
+        let availableTextHeight = windowHeight - totalChrome
         
-        // Maximum text area height that keeps container positioned correctly
+        print("🔍 Max height calculation:")
+        print("  - Window height: \(windowHeight)")
+        print("  - Title bar height: \(titleBarHeight)")
+        print("  - Container padding (top/bottom): \(containerPadding * 2)")
+        print("  - Text internal padding: \(textInternalPadding)")
+        print("  - Controls row height: \(controlsRowHeight)")
+        print("  - Total chrome: \(totalChrome)")
+        print("  - Available text height: \(availableTextHeight)")
+        print("  - Final max height: \(max(200, availableTextHeight))")
+        
+        // Maximum text area height that achieves perfect vertical symmetry
         return max(200, availableTextHeight)
     }
 }
