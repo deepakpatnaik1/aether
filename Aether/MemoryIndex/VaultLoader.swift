@@ -53,42 +53,6 @@ class VaultLoader: ObservableObject {
         }
     }
     
-    /// Load conversation history from vault
-    /// BLUEPRINT: Eventually loads all markdown files into structured memory
-    /// CURRENT: Simple conversation.md file loading
-    func loadConversationHistory() -> [ChatMessage] {
-        let filePath = VaultConfig.conversationFilePath
-        
-        guard FileManager.default.fileExists(atPath: filePath) else {
-            print("📖 No conversation history found at \(filePath)")
-            return []
-        }
-        
-        do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
-            let messages = try JSONDecoder().decode([ChatMessage].self, from: data)
-            print("📖 Loaded \(messages.count) messages from conversation history")
-            return messages
-        } catch {
-            print("❌ Failed to load conversation history: \(error)")
-            return []
-        }
-    }
-    
-    /// Save conversation history to vault
-    /// BLUEPRINT: Eventually handles complex markdown file operations
-    /// CURRENT: Simple JSON serialization to conversation.md
-    func saveConversationHistory(_ messages: [ChatMessage]) {
-        let filePath = VaultConfig.conversationFilePath
-        
-        do {
-            let data = try JSONEncoder().encode(messages)
-            try data.write(to: URL(fileURLWithPath: filePath))
-            print("💾 Saved \(messages.count) messages to conversation history")
-        } catch {
-            print("❌ Failed to save conversation history: \(error)")
-        }
-    }
     
     // MARK: - Vault Management
     

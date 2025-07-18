@@ -27,7 +27,6 @@ class AppCoordinator: ObservableObject {
     // Core services
     let personaRegistry = PersonaRegistry()
     let messageStore: MessageStore
-    let threePaneManager = ThreePaneManager()
     let focusManager = FocusManager()
     let textMeasurementService = TextMeasurementService()
     let keyboardHandler = KeyboardHandler()
@@ -41,8 +40,7 @@ class AppCoordinator: ObservableObject {
         // Initialize MessageStore with PersonaRegistry dependency
         messageStore = MessageStore(personaRegistry: personaRegistry)
         
-        // Wire PersonaRegistry into LLMManager
-        messageStore.llmManager.setPersonaRegistry(personaRegistry)
+        // PersonaRegistry integration removed - OmniscientBundleBuilder handles memory loading directly
         
         setupDerivedServices()
         wireEventHandling()
@@ -58,11 +56,7 @@ class AppCoordinator: ObservableObject {
     
     private func setupObservableObjectForwarding() {
         // Forward nested ObservableObject changes to trigger SwiftUI updates
-        threePaneManager.objectWillChange
-            .sink { [weak self] in
-                self?.objectWillChange.send()
-            }
-            .store(in: &cancellables)
+        // ThreePaneManager removed - Blueprint 5.0 eliminates 3-pane architecture
     }
     
     private func wireEventHandling() {
@@ -73,15 +67,8 @@ class AppCoordinator: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Wire keyboard events to window manager
-        keyboardHandler.windowPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] event in
-                Task { @MainActor in
-                    self?.handleWindowEvent(event)
-                }
-            }
-            .store(in: &cancellables)
+        // Window event handling removed - Blueprint 5.0 eliminates 3-pane architecture
+        // Future: Add sidebar-related window event handling here
         
         // Wire keyboard events to focus manager
         keyboardHandler.focusPublisher
@@ -112,14 +99,8 @@ class AppCoordinator: ObservableObject {
         }
     }
     
-    @MainActor
-    private func handleWindowEvent(_ event: WindowEvent) {
-        switch event {
-        case .cycleSize:
-            threePaneManager.cycleWindowSize()
-            threePaneManager.handleAppActivation()
-        }
-    }
+    // Window event handling removed - Blueprint 5.0 eliminates 3-pane architecture
+    // Future: Add sidebar-related window event handling here
     
     private func handleFocusEvent(_ event: FocusEvent) {
         switch event {

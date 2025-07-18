@@ -4,9 +4,13 @@
     "codeFont": "Menlo"
   },
   "layout": {
-    "padding": {},
+    "padding": {
+      "containerPadding": 32
+    },
     "margins": {},
-    "sizing": {}
+    "sizing": {
+      "contentWidth": 592
+    }
   },
   "glassmorphic": {
     "transparency": {
@@ -46,13 +50,13 @@
     "inputBar": {
       "cornerRadius": 12,
       "padding": 16,
-      "textPadding": 16,
+      "textPadding": 20,
       "topPadding": 12,
       "bottomPadding": 12,
       "minHeight": 22,
       "placeholderText": "Ask anything...",
       "fontSize": 12,
-      "placeholderPaddingHorizontal": 21,
+      "placeholderPaddingHorizontal": 20,
       "controlsSpacing": 12,
       "defaultTextHeight": 22
     },
@@ -66,6 +70,28 @@
         "shadowRadiusMultiplier": 0.5,
         "borderWidth": 0.5,
         "shadowOffsetY": -1
+      },
+      "authorLabel": {
+        "minimalBadge": {
+          "backgroundColor": 0.15,
+          "cornerRadius": 8,
+          "accentColors": {
+            "boss": {"red": 0.4, "green": 0.7, "blue": 0.9},
+            "vanessa": {"red": 0.8, "green": 0.6, "blue": 0.4},
+            "vlad": {"red": 0.7, "green": 0.5, "blue": 0.8},
+            "samara": {"red": 0.5, "green": 0.8, "blue": 0.6},
+            "claude": {"red": 0.9, "green": 0.7, "blue": 0.5}
+          }
+        },
+        "coloredBorder": {
+          "borderWidth": 2,
+          "backgroundColor": 0.05,
+          "cornerRadius": 4
+        },
+        "softColorFill": {
+          "cornerRadius": 6,
+          "fillOpacity": 0.12
+        }
       }
     },
     "buttons": {
@@ -100,8 +126,8 @@
     },
     "messageNavigation": {
       "scrollDuration": 0.3,
-      "smoothScrollIncrement": 100,
-      "smoothScrollDuration": 0.15
+      "smoothScrollIncrement": 40,
+      "smoothScrollDuration": 0.25
     }
   },
   "pane": {

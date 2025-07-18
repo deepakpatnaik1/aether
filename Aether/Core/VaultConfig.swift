@@ -64,18 +64,18 @@ struct VaultConfig {
     
     // MEMORY SYSTEM FILES
     
-    /// Conversation history file for UI persistence
-    /// CURRENT: Simple JSON serialization of ChatMessage array
-    /// NOTE: This is for UI conversation restoration, real memory comes from vault files
-    static let conversationFilePath: String = {
-        return "\(journalPath)/conversation.md"
-    }()
-    
     /// Boss profile for persona integration and omniscient memory
     /// BLUEPRINT: "Boss profile (boss.md)" - part of omniscient memory scope
     /// ACHIEVEMENT TODAY: ✅ Successfully integrated into memory context
     static let bossProfilePath: String = {
         return "\(vaultRoot)/playbook/boss/Boss.md"
+    }()
+    
+    /// Current persona persistence file for super-persistent persona state
+    /// BLUEPRINT: "currentPersona.md" - maintains active persona across app restarts
+    /// ACHIEVEMENT: ✅ Super-persistent persona state management
+    static let currentPersonaPath: String = {
+        return "\(vaultRoot)/playbook/tools/currentPersona.md"
     }()
     
     /// Temporary notes file (proof of concept)

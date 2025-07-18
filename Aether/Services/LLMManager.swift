@@ -30,14 +30,76 @@ class LLMManager: ObservableObject {
     private lazy var services: [String: any LLMServiceProtocol] = createServices()
     private lazy var router: ProviderRouter = ProviderRouter(configuration: configuration, services: services)
     
-    // BLUEPRINT: Memory integration handled by PersonaRegistry omniscient context
-    
-    // PERSONA SYSTEM: PersonaRegistry dependency for behavioral rules
-    private var personaRegistry: PersonaRegistry?
+    // BLUEPRINT: Memory integration handled by OmniscientBundleBuilder
     
     @Published var isLoading = false
     @Published var currentService = "None"
     @Published var errorMessage: String?
+    @Published var currentModel: String = ""
+    
+    init() {
+        // Set initial current model from primary routing
+        if let primaryRoute = configuration.getPrimaryRouting() {
+            currentModel = getModelKey(provider: primaryRoute.provider, model: primaryRoute.model)
+        }
+    }
+    
+    // MARK: - Model Management
+    
+    /// Get available models for UI display (only those with valid API keys)
+    func getAvailableModels() -> [String] {
+        guard let config = configuration.config else { return [] }
+        
+        var models: [String] = []
+        for (providerKey, provider) in config.providers {
+            // Only include models from providers with valid API keys
+            let apiKey = configuration.getApiKey(for: providerKey)
+            guard !apiKey.isEmpty else { continue }
+            
+            for (modelKey, _) in provider.models {
+                models.append(getModelKey(provider: providerKey, model: modelKey))
+            }
+        }
+        return models.sorted()
+    }
+    
+    /// Switch to a different model
+    func switchModel(to modelKey: String) {
+        let (provider, model) = parseModelKey(modelKey)
+        
+        // Validate model exists
+        guard configuration.getModel(provider: provider, model: model) != nil else {
+            print("❌ Model not found: \(modelKey)")
+            return
+        }
+        
+        // Update current model
+        currentModel = modelKey
+        
+        // Update router to use new model as primary
+        router.setPrimaryModel(provider: provider, model: model)
+        
+        print("✅ Switched to model: \(modelKey)")
+    }
+    
+    /// Get current model key
+    func getCurrentModel() -> String {
+        return currentModel
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func getModelKey(provider: String, model: String) -> String {
+        return "\(provider):\(model)"
+    }
+    
+    private func parseModelKey(_ modelKey: String) -> (provider: String, model: String) {
+        let parts = modelKey.split(separator: ":")
+        if parts.count == 2 {
+            return (String(parts[0]), String(parts[1]))
+        }
+        return ("", "")
+    }
     
     // MARK: - Service Discovery
     
@@ -62,8 +124,8 @@ class LLMManager: ObservableObject {
     /// BLUEPRINT: Eventually includes full vault context (omniscient memory scope)
     /// CURRENT: Includes conversation history for continuity
     func sendMessage(_ message: String) async throws -> String {
-        // Default to "aether" persona for backward compatibility
-        let result = try await sendMessage(message, persona: "aether")
+        // Use current persistent persona instead of hardcoded default
+        let result = try await sendMessage(message, persona: getCurrentPersistentPersona())
         return result.mainResponse
     }
     
@@ -91,139 +153,123 @@ class LLMManager: ObservableObject {
         return parsePersonaResponse(rawResponse)
     }
     
-    /// Build persona-aware prompt with compression instructions
-    /// ARCHITECTURE: Persona responds authentically, then applies machine compression to own work
+    /// Build persona-aware prompt using unified omniscient bundle
+    /// ARCHITECTURE: Complete memory bundle with instructions header
     private func buildPersonaPrompt(persona: String?, userMessage: String) throws -> String {
-        // Load persona omniscient context (boss + tools + journal + persona)
-        let omniscientContext = getPersonaBehavioralRules(for: persona)
+        // CRITICAL: Get current persistent persona instead of hardcoded fallback
+        let actualPersona = persona ?? getCurrentPersistentPersona()
         
-        // Load dual-task instructions
-        let dualTaskInstructions = try loadDualTaskInstructions()
+        // Use unified omniscient bundle builder
+        let bundleBuilder = OmniscientBundleBuilder.shared
         
-        // Load machine compression methodology
-        let compressionRules = try loadCompressionRules()
-        
-        // Build unified prompt where persona compresses their own response
-        return """
-        RESPONSE INSTRUCTIONS:
-        
-        \(dualTaskInstructions)
-        
-        \(omniscientContext.isEmpty ? "" : "OMNISCIENT CONTEXT:\n\(omniscientContext)\n\n")
-        
-        USER MESSAGE:
-        \(userMessage)
-        
-        COMPRESSION METHODOLOGY:
-        \(compressionRules)
-        """
-    }
-    
-    /// Inject PersonaRegistry dependency
-    func setPersonaRegistry(_ registry: PersonaRegistry) {
-        self.personaRegistry = registry
-    }
-    
-    /// Load persona behavioral rules from PersonaRegistry
-    private func getPersonaBehavioralRules(for persona: String?) -> String {
-        guard let persona = persona,
-              let registry = personaRegistry else { return "" }
-        
-        // Load behavioral rules from PersonaRegistry
-        return registry.behaviorRules(for: persona) ?? ""
-    }
-    
-    /// Load dual-task instructions from vault tools
-    /// ROBUST: Handles missing instructions file gracefully
-    private func loadDualTaskInstructions() throws -> String {
-        let instructionsPath = "\(VaultConfig.vaultRoot)/playbook/tools/dual-task-instructions.md"
-        
-        do {
-            let content = try String(contentsOfFile: instructionsPath, encoding: .utf8)
-            print("✅ Loaded dual-task instructions")
-            return content
-        } catch {
-            print("❌ Failed to load dual-task instructions: \(error)")
-            // Fallback to basic instructions
-            return """
-            Complete TWO tasks:
-            1. Respond as persona
-            2. Compress the conversation turn
-            
-            Format: ---MAIN_RESPONSE--- then ---MACHINE_TRIM---
-            """
+        // Validate bundle can be assembled
+        let validationIssues = bundleBuilder.validateBundle(for: actualPersona)
+        if !validationIssues.isEmpty {
+            print("⚠️ Bundle validation issues: \(validationIssues.joined(separator: ", "))")
         }
-    }
-    
-    /// Load machine compression methodology from vault tools
-    /// ROBUST: Handles missing compression file gracefully
-    private func loadCompressionRules() throws -> String {
-        let compressionPath = "\(VaultConfig.vaultRoot)/playbook/tools/machine-trim.md"
         
-        do {
-            let content = try String(contentsOfFile: compressionPath, encoding: .utf8)
-            print("✅ Loaded machine compression methodology")
-            return content
-        } catch {
-            print("❌ Failed to load compression methodology: \(error)")
-            // Fallback to basic compression instructions
-            return """
-            Basic compression instructions:
-            1. Preserve speaker identity and key points
-            2. Remove filler words and redundancy
-            3. Maintain semantic meaning
-            4. Format as structured dialogue
-            """
-        }
+        // Build complete omniscient bundle
+        return try bundleBuilder.buildBundle(for: actualPersona, userMessage: userMessage)
     }
     
-    /// Parse persona response with machine compression into main response and trimmed version
-    /// ROBUST: Handles various response formats and edge cases
+    /// Get current persistent persona from vault (super-persistent across app restarts)
+    /// CRITICAL: Never defaults to hardcoded values - always reads from vault
+    private func getCurrentPersistentPersona() -> String {
+        let path = VaultConfig.currentPersonaPath
+        
+        if FileManager.default.fileExists(atPath: path) {
+            do {
+                let savedPersona = try String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !savedPersona.isEmpty {
+                    return savedPersona
+                }
+            } catch {
+                print("⚠️ LLMManager failed to load current persona: \(error)")
+            }
+        }
+        
+        // CRITICAL ERROR: currentPersona.md missing or corrupted
+        // Create default file with emergency fallback
+        let firstPersona = "samara" // Emergency fallback when PersonaRegistry not available
+        do {
+            try firstPersona.write(toFile: path, atomically: true, encoding: String.Encoding.utf8)
+            print("🔧 Created missing currentPersona.md with: \(firstPersona)")
+        } catch {
+            print("❌ Failed to create currentPersona.md: \(error)")
+        }
+        return firstPersona
+    }
+    
+    /// Parse persona response with 3-section format and process all sections
+    /// COMPLETE: Handles taxonomy analysis, main response, and machine trim with actions
     private func parsePersonaResponse(_ rawResponse: String) -> (mainResponse: String, trimmedResponse: String?) {
+        let taxonomyMarker = "---TAXONOMY_ANALYSIS---"
         let mainMarker = "---MAIN_RESPONSE---"
         let trimMarker = "---MACHINE_TRIM---"
         
-        // Find main response marker
-        guard let mainStart = rawResponse.range(of: mainMarker)?.upperBound else {
-            // No structured response - return as main response only
-            print("⚠️ No structured response markers found - using raw response")
+        // Extract all three sections
+        let taxonomyAnalysis = extractSection(from: rawResponse, start: taxonomyMarker, end: mainMarker)
+        let mainResponse = extractSection(from: rawResponse, start: mainMarker, end: trimMarker)
+        let machineTrim = extractSection(from: rawResponse, start: trimMarker, end: nil)
+        
+        // Process taxonomy analysis (if present)
+        if let taxonomy = taxonomyAnalysis, !taxonomy.isEmpty {
+            processTaxonomyAnalysis(taxonomy)
+        }
+        
+        // Validate main response
+        guard let main = mainResponse, !main.isEmpty else {
+            // Fallback: treat entire response as main if no structure found
             return (rawResponse.trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
         
-        // Find trim marker
-        if let trimStart = rawResponse.range(of: trimMarker)?.upperBound {
-            // Both sections present - extract each cleanly
-            let mainEnd = rawResponse.range(of: trimMarker, range: mainStart..<rawResponse.endIndex)?.lowerBound ?? rawResponse.endIndex
-            
-            let mainResponse = String(rawResponse[mainStart..<mainEnd])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            let trimmedResponse = String(rawResponse[trimStart...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Validate both sections have content
-            guard !mainResponse.isEmpty else {
-                print("⚠️ Main response section is empty")
-                return (rawResponse.trimmingCharacters(in: .whitespacesAndNewlines), nil)
-            }
-            
-            guard !trimmedResponse.isEmpty else {
-                print("⚠️ Trimmed response section is empty")
-                return (mainResponse, nil)
-            }
-            
-            print("✅ Successfully parsed persona response with machine compression")
-            return (mainResponse, trimmedResponse)
-            
+        // Return main response and trim (if available)
+        return (main, machineTrim)
+    }
+    
+    /// Extract section content between markers
+    private func extractSection(from response: String, start: String, end: String?) -> String? {
+        guard let startRange = response.range(of: start)?.upperBound else {
+            return nil
+        }
+        
+        let endBound: String.Index
+        if let endMarker = end,
+           let endRange = response.range(of: endMarker, range: startRange..<response.endIndex)?.lowerBound {
+            endBound = endRange
         } else {
-            // Only main response marker found
-            let mainResponse = String(rawResponse[mainStart...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            endBound = response.endIndex
+        }
+        
+        let content = String(response[startRange..<endBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return content.isEmpty ? nil : content
+    }
+    
+    /// Process taxonomy analysis section - evolve taxonomy
+    private func processTaxonomyAnalysis(_ taxonomyContent: String) {
+        // Parse taxonomy metadata from the analysis
+        guard let metadata = TaxonomyManager.shared.parseTrimMetadata(taxonomyContent) else {
+            print("⚠️ Could not parse taxonomy from analysis section")
+            return
+        }
+        
+        // Validate and add to taxonomy
+        let validation = TaxonomyManager.shared.validateTopicHierarchy(metadata.topicHierarchy)
+        if validation.isValid {
+            TaxonomyManager.shared.addToTaxonomy(hierarchyString: metadata.topicHierarchy)
+            print("📋 Taxonomy evolved: \(metadata.topicHierarchy)")
             
-            print("⚠️ Only main response found - no trim section")
-            return (mainResponse, nil)
+            if !validation.suggestions.isEmpty {
+                print("📋 Evolution notes: \(validation.suggestions.joined(separator: ", "))")
+            }
+        } else {
+            print("⚠️ Invalid taxonomy hierarchy: \(metadata.topicHierarchy)")
+            print("   Warnings: \(validation.warnings.joined(separator: ", "))")
         }
     }
+    
     
     /// Stream message with automatic provider fallback
     func streamMessage(_ message: String) async throws -> AsyncStream<String> {

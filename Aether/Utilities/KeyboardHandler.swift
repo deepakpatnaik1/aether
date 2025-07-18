@@ -47,11 +47,8 @@ class KeyboardHandler: ObservableObject {
     // MARK: - Key Event Handling
     @MainActor
     func handleKeyPress(key: String, modifiers: EventModifiers) {
-        // Check for Ctrl+§ (section sign)
-        if key == "§" && modifiers.contains(.control) {
-            windowSubject.send(.cycleSize)
-            focusSubject.send(.restoreAfterWindowOperation)
-        }
+        // Window sizing removed - Blueprint 5.0 eliminates 3-pane architecture
+        // Future: Add sidebar navigation shortcuts here
     }
     
     @MainActor
@@ -85,7 +82,8 @@ enum NavigationDirection {
 }
 
 enum WindowEvent {
-    case cycleSize
+    // Window sizing removed - Blueprint 5.0 eliminates 3-pane architecture
+    // Future: Add sidebar-related window events here
 }
 
 enum FocusEvent {

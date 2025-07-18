@@ -91,6 +91,7 @@ struct DesignTokens: Codable {
             let bodyFontSize: Double
             let authorFontSize: Double
             let highlight: Highlight
+            let authorLabel: AuthorLabel
             
             struct Highlight: Codable {
                 let fillOpacity: Double
@@ -99,6 +100,35 @@ struct DesignTokens: Codable {
                 let shadowRadiusMultiplier: Double
                 let borderWidth: Double
                 let shadowOffsetY: Double
+            }
+            
+            struct AuthorLabel: Codable {
+                let minimalBadge: MinimalBadge
+                let coloredBorder: ColoredBorder
+                let softColorFill: SoftColorFill
+                
+                struct MinimalBadge: Codable {
+                    let backgroundColor: Double
+                    let cornerRadius: Double
+                    let accentColors: [String: AccentColor]
+                    
+                    struct AccentColor: Codable {
+                        let red: Double
+                        let green: Double
+                        let blue: Double
+                    }
+                }
+                
+                struct ColoredBorder: Codable {
+                    let borderWidth: Double
+                    let backgroundColor: Double
+                    let cornerRadius: Double
+                }
+                
+                struct SoftColorFill: Codable {
+                    let cornerRadius: Double
+                    let fillOpacity: Double
+                }
             }
         }
         

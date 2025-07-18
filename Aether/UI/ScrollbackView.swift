@@ -25,70 +25,58 @@ struct ScrollbackView: View {
     @EnvironmentObject var personaRegistry: PersonaRegistry
     @EnvironmentObject var scrollCoordinator: ScrollCoordinator
     @State private var scrollProxy: ScrollViewProxy?
+    @State private var scrollPosition = ScrollPosition()
     
     private let tokens = DesignTokens.shared
     
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(messageStore.messages.enumerated()), id: \.element.id) { index, message in
-                        let showAuthor = shouldShowAuthor(for: index)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(getVisibleMessages().enumerated()), id: \.element.message.id) { displayIndex, messageData in
+                        let index = messageData.originalIndex
+                        let message = messageData.message
+                        let showAuthor = shouldShowAuthor(for: displayIndex, in: getVisibleMessages())
                         
                         VStack(alignment: .leading, spacing: 0) {
                             if showAuthor {
-                                Text(getDisplayName(for: message))
-                                    .font(.custom(tokens.typography.bodyFont, size: tokens.elements.scrollback.authorFontSize))
-                                    .foregroundColor(.secondary)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.black.opacity(tokens.glassmorphic.transparency.inputBackground))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 6)
-                                                    .stroke(
-                                                        LinearGradient(
-                                                            colors: [
-                                                                .white.opacity(tokens.glassmorphic.transparency.borderTop),
-                                                                .white.opacity(tokens.glassmorphic.transparency.borderBottom)
-                                                            ],
-                                                            startPoint: .top,
-                                                            endPoint: .bottom
-                                                        ),
-                                                        lineWidth: 0.5
-                                                    )
-                                            )
-                                            .shadow(
-                                                color: .white.opacity(tokens.glassmorphic.shadows.innerGlow.opacity),
-                                                radius: tokens.glassmorphic.shadows.innerGlow.radius / 2,
-                                                x: 0,
-                                                y: -1
-                                            )
-                                    )
-                                    .padding(.top, index == 0 ? 0 : 4)
-                                    .padding(.bottom, 4)
-                                    .padding(.leading, 8) // Align text inside container with message body text
+                                let displayName = getDisplayName(for: message)
+                                authorLabelColoredBorder(displayName: displayName, message: message, displayIndex: displayIndex)
                             }
                             
                             MessageBubbleView(message: message, showAuthor: false)
-                                .id("message-\(index)")
+                                .id("message-\(displayIndex)")
                                 .background(
                                     scrollCoordinator.currentMessageIndex == index ? 
                                     MessageHighlight() : nil
                                 )
-                                .padding(.bottom, isLastMessageFromSpeaker(at: index) ? 4 : 2)
+                                .padding(.bottom, isLastMessageFromSpeaker(at: displayIndex, in: getVisibleMessages()) ? 4 : 2)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.horizontal, tokens.layout.padding["scrollback"] ?? 20)
                 .padding(.top, tokens.layout.padding["top"] ?? 20)
             }
             .scrollIndicators(.hidden)
+            .focusable(true)
+            .scrollTargetLayout()
             .onChange(of: scrollCoordinator.currentMessageIndex) { _, newIndex in
                 if newIndex >= 0 && newIndex < messageStore.messages.count {
                     withAnimation(.easeInOut(duration: tokens.animations.messageNavigation.scrollDuration)) {
                         proxy.scrollTo("message-\(newIndex)", anchor: .top)
+                    }
+                }
+            }
+            .onChange(of: messageStore.messages.count) { oldCount, newCount in
+                // When messages first load, scroll to bottom
+                if oldCount == 0 && newCount > 0 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        let visibleMessages = getVisibleMessages()
+                        if !visibleMessages.isEmpty {
+                            let targetDisplayIndex = visibleMessages.count - 1
+                            proxy.scrollTo("message-\(targetDisplayIndex)", anchor: .top)
+                        }
                     }
                 }
             }
@@ -103,15 +91,16 @@ struct ScrollbackView: View {
                 if shouldScroll {
                     let targetIndex = scrollCoordinator.autoScrollTargetIndex
                     let duration = tokens.animations.messageNavigation.scrollDuration
+                    
+                    // Use .bottom anchor for latest message to show it at bottom of view
+                    let anchor: UnitPoint = (targetIndex == messageStore.messages.count - 1) ? .bottom : .top
+                    
                     withAnimation(.easeInOut(duration: duration)) {
-                        proxy.scrollTo("message-\(targetIndex)", anchor: .top)
+                        proxy.scrollTo("message-\(targetIndex)", anchor: anchor)
                     }
                     scrollCoordinator.clearAutoScrollRequest()
                 }
             }
-        }
-        .onAppear {
-            print("📱 ScrollbackView appeared with \(messageStore.messages.count) messages")
         }
     }
     
@@ -130,26 +119,44 @@ struct ScrollbackView: View {
         }
     }
     
+    // MARK: - Message Filtering Logic
+    
+    private struct MessageData {
+        let message: ChatMessage
+        let originalIndex: Int
+    }
+    
+    private func getVisibleMessages() -> [MessageData] {
+        let visibleIndices = scrollCoordinator.visibleMessageIndices
+        
+        return messageStore.messages.enumerated().compactMap { index, message in
+            if visibleIndices.contains(index) {
+                return MessageData(message: message, originalIndex: index)
+            }
+            return nil
+        }
+    }
+    
     // MARK: - Speaker Grouping Logic
     
-    private func shouldShowAuthor(for index: Int) -> Bool {
-        guard index < messageStore.messages.count else { return false }
+    private func shouldShowAuthor(for index: Int, in messages: [MessageData]) -> Bool {
+        guard index < messages.count else { return false }
         
         if index == 0 { return true }
         
-        let currentMessage = messageStore.messages[index]
-        let previousMessage = messageStore.messages[index - 1]
+        let currentMessage = messages[index].message
+        let previousMessage = messages[index - 1].message
         
         return currentMessage.author != previousMessage.author
     }
     
-    private func isLastMessageFromSpeaker(at index: Int) -> Bool {
-        guard index < messageStore.messages.count else { return true }
+    private func isLastMessageFromSpeaker(at index: Int, in messages: [MessageData]) -> Bool {
+        guard index < messages.count else { return true }
         
-        if index == messageStore.messages.count - 1 { return true }
+        if index == messages.count - 1 { return true }
         
-        let currentMessage = messageStore.messages[index]
-        let nextMessage = messageStore.messages[index + 1]
+        let currentMessage = messages[index].message
+        let nextMessage = messages[index + 1].message
         
         return currentMessage.author != nextMessage.author
     }
@@ -181,6 +188,141 @@ struct ScrollbackView: View {
         
         // Fallback for unknown cases
         return "Unknown"
+    }
+    
+    // MARK: - Author Label Styling Approaches
+    
+    /// Approach 1: Minimal Badge Style - Clean rounded pill with subtle color accent
+    @ViewBuilder
+    private func authorLabelMinimalBadge(displayName: String, message: ChatMessage, displayIndex: Int) -> some View {
+        let accentColor = getPersonaAccentColor(for: message)
+        
+        Text(displayName)
+            .font(.custom(tokens.typography.bodyFont, size: tokens.elements.scrollback.authorFontSize))
+            .foregroundColor(.white.opacity(0.9))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: tokens.elements.scrollback.authorLabel.minimalBadge.cornerRadius)
+                    .fill(Color.white.opacity(tokens.elements.scrollback.authorLabel.minimalBadge.backgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: tokens.elements.scrollback.authorLabel.minimalBadge.cornerRadius)
+                            .stroke(accentColor.opacity(0.3), lineWidth: 0.5)
+                    )
+            )
+            .padding(.top, displayIndex == 0 ? 0 : 4)
+            .padding(.bottom, 4)
+            .padding(.leading, 8)
+    }
+    
+    /// Approach 2: Typographic Only - Pure elegant text, no background
+    @ViewBuilder
+    private func authorLabelTypographicOnly(displayName: String, message: ChatMessage, displayIndex: Int) -> some View {
+        let accentColor = getPersonaAccentColor(for: message)
+        
+        Text(displayName)
+            .font(.custom(tokens.typography.bodyFont, size: tokens.elements.scrollback.authorFontSize))
+            .foregroundColor(accentColor.opacity(0.8))
+            .fontWeight(.medium)
+            .padding(.top, displayIndex == 0 ? 0 : 4)
+            .padding(.bottom, 4)
+            .padding(.leading, 8)
+    }
+    
+    /// Approach 3: Colored Border Accent - Thin left accent border per persona with horizontal separator line
+    @ViewBuilder
+    private func authorLabelColoredBorder(displayName: String, message: ChatMessage, displayIndex: Int) -> some View {
+        let accentColor = getPersonaAccentColor(for: message)
+        
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(accentColor)
+                        .frame(width: tokens.elements.scrollback.authorLabel.coloredBorder.borderWidth)
+                    
+                    Text(displayName)
+                        .font(.system(size: tokens.elements.scrollback.authorFontSize))
+                        .foregroundColor(.white.opacity(0.85))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: tokens.elements.scrollback.authorLabel.coloredBorder.cornerRadius)
+                                .fill(Color.white.opacity(tokens.elements.scrollback.authorLabel.coloredBorder.backgroundColor))
+                        )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: tokens.elements.scrollback.authorLabel.coloredBorder.cornerRadius))
+                
+                // Horizontal separator line with soft fade
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accentColor.opacity(0.0),
+                                accentColor.opacity(0.3),
+                                accentColor.opacity(0.6)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(height: 1)
+                    .shadow(
+                        color: accentColor.opacity(0.2),
+                        radius: 0.5,
+                        x: 0,
+                        y: 0
+                    )
+                    .padding(.leading, 112)
+            }
+        }
+        .padding(.top, displayIndex == 0 ? 0 : 4)
+        .padding(.bottom, 4)
+        .padding(.leading, 8)
+    }
+    
+    /// Approach 4: Soft Color Fill - Gentle colored backgrounds
+    @ViewBuilder
+    private func authorLabelSoftColorFill(displayName: String, message: ChatMessage, displayIndex: Int) -> some View {
+        let accentColor = getPersonaAccentColor(for: message)
+        
+        Text(displayName)
+            .font(.custom(tokens.typography.bodyFont, size: tokens.elements.scrollback.authorFontSize))
+            .foregroundColor(.white.opacity(0.95))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: tokens.elements.scrollback.authorLabel.softColorFill.cornerRadius)
+                    .fill(accentColor.opacity(tokens.elements.scrollback.authorLabel.softColorFill.fillOpacity))
+            )
+            .padding(.top, displayIndex == 0 ? 0 : 4)
+            .padding(.bottom, 4)
+            .padding(.leading, 8)
+    }
+    
+    /// Helper function to get persona-specific accent colors
+    private func getPersonaAccentColor(for message: ChatMessage) -> Color {
+        let personaKey: String
+        
+        if message.author == "User" {
+            personaKey = "boss"
+        } else if let personaId = message.persona {
+            personaKey = personaId.lowercased()
+        } else if message.author == "AI" {
+            personaKey = "claude"
+        } else {
+            personaKey = "boss"
+        }
+        
+        guard let colorData = tokens.elements.scrollback.authorLabel.minimalBadge.accentColors[personaKey] else {
+            return Color.white
+        }
+        
+        return Color(
+            red: colorData.red,
+            green: colorData.green,
+            blue: colorData.blue
+        )
     }
 }
 

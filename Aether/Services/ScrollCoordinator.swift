@@ -28,12 +28,22 @@ class ScrollCoordinator: ObservableObject {
     @Published var shouldAutoScroll: Bool = false
     @Published var autoScrollTargetIndex: Int = 0
     
+    // Turn-based navigation
+    @Published var currentTurnIndex: Int = -1
+    @Published var isInTurnMode: Bool = false
+    @Published var visibleMessageIndices: Set<Int> = Set()
+    private var conversationTurns: [(bossIndex: Int, personaIndex: Int)] = []
+    
     private let messageStore: MessageStore
     private var cancellables = Set<AnyCancellable>()
     private var scrollProxy: ScrollViewProxy?
     
     init(messageStore: MessageStore) {
         self.messageStore = messageStore
+        
+        // Initialize visible indices to show all messages
+        visibleMessageIndices = Set(0..<messageStore.messages.count)
+        
         setupMessageMonitoring()
     }
     
@@ -44,29 +54,45 @@ class ScrollCoordinator: ObservableObject {
     // MARK: - Navigation Interface
     
     func navigateUp() {
-        let messageCount = messageStore.messages.count
-        guard messageCount > 0 else { return }
+        guard !conversationTurns.isEmpty else { return }
         
         DispatchQueue.main.async {
-            if self.currentMessageIndex <= 0 {
-                self.currentMessageIndex = 0
+            // Enter turn mode if not already in it
+            if !self.isInTurnMode {
+                self.isInTurnMode = true
+                self.currentTurnIndex = self.conversationTurns.count - 1 // Start with latest turn
             } else {
-                self.currentMessageIndex -= 1
+                // Navigate to previous turn
+                if self.currentTurnIndex > 0 {
+                    self.currentTurnIndex -= 1
+                }
+            }
+            
+            // Update visible indices in next run loop to avoid publishing warnings
+            DispatchQueue.main.async {
+                self.updateVisibleIndices()
             }
         }
     }
     
     func navigateDown() {
-        let messageCount = messageStore.messages.count
-        guard messageCount > 0 else { return }
+        guard !conversationTurns.isEmpty else { return }
         
         DispatchQueue.main.async {
-            if self.currentMessageIndex >= messageCount - 1 {
-                self.currentMessageIndex = messageCount - 1
-            } else if self.currentMessageIndex == -1 {
-                self.currentMessageIndex = 0
+            // Enter turn mode if not already in it
+            if !self.isInTurnMode {
+                self.isInTurnMode = true
+                self.currentTurnIndex = 0 // Start with earliest turn
             } else {
-                self.currentMessageIndex += 1
+                // Navigate to next turn
+                if self.currentTurnIndex < self.conversationTurns.count - 1 {
+                    self.currentTurnIndex += 1
+                }
+            }
+            
+            // Update visible indices in next run loop to avoid publishing warnings
+            DispatchQueue.main.async {
+                self.updateVisibleIndices()
             }
         }
     }
@@ -79,7 +105,49 @@ class ScrollCoordinator: ObservableObject {
         performSmoothScroll(direction: .down)
     }
     
+    // MARK: - Turn Mode Interface
+    
+    func exitTurnMode() {
+        DispatchQueue.main.async {
+            self.isInTurnMode = false
+            self.currentTurnIndex = -1
+            self.currentMessageIndex = -1
+            
+            // Update visible indices in next run loop to avoid publishing warnings
+            DispatchQueue.main.async {
+                self.updateVisibleIndices()
+                
+                // Auto-scroll to latest message when exiting turn mode
+                let latestIndex = self.messageStore.messages.count - 1
+                self.autoScrollTargetIndex = latestIndex
+                self.shouldAutoScroll = true
+            }
+        }
+    }
+    
+    private func updateVisibleIndices() {
+        let messageCount = messageStore.messages.count
+        if isInTurnMode && currentTurnIndex >= 0 && currentTurnIndex < conversationTurns.count {
+            let turn = conversationTurns[currentTurnIndex]
+            visibleMessageIndices = Set([turn.bossIndex, turn.personaIndex])
+        } else {
+            // Show all indices if not in turn mode
+            visibleMessageIndices = Set(0..<messageCount)
+        }
+    }
+    
     // MARK: - Auto-scroll Interface
+    
+    func scrollToLatestMessage() {
+        guard !messageStore.messages.isEmpty else { return }
+        
+        let latestIndex = messageStore.messages.count - 1
+        DispatchQueue.main.async {
+            self.autoScrollTargetIndex = latestIndex
+            self.shouldAutoScroll = true
+            self.currentMessageIndex = -1
+        }
+    }
     
     func requestAutoScrollToUserQuestion() {
         let messageCount = messageStore.messages.count
@@ -111,7 +179,6 @@ class ScrollCoordinator: ObservableObject {
     private func setupMessageMonitoring() {
         // Monitor message changes for auto-scroll triggers
         messageStore.$messages
-            .dropFirst() // Skip initial empty state
             .sink { [weak self] messages in
                 self?.handleMessageUpdate(messages)
             }
@@ -119,19 +186,49 @@ class ScrollCoordinator: ObservableObject {
     }
     
     private func handleMessageUpdate(_ messages: [ChatMessage]) {
-        guard !messages.isEmpty && messages.count >= 2 else { return }
+        guard !messages.isEmpty else { 
+            // If messages are empty, ensure visible indices are also empty
+            DispatchQueue.main.async {
+                self.visibleMessageIndices = Set()
+            }
+            return 
+        }
         
-        let lastMessage = messages.last!
-        if lastMessage.author == "AI" && !lastMessage.content.isEmpty {
-            // Check if this is a new AI response (not an update to existing)
-            if messages.count > 1 {
-                let previousMessage = messages[messages.count - 2]
-                if previousMessage.author == "User" {
-                    // New AI response completed - trigger auto-scroll
-                    requestAutoScrollToUserQuestion()
+        // Update conversation turns
+        buildConversationTurns(from: messages)
+        
+        // Update visible indices after rebuilding turns
+        DispatchQueue.main.async {
+            self.updateVisibleIndices()
+            
+            // Auto-scroll to latest message whenever messages change (only if not in turn mode)
+            if !self.isInTurnMode {
+                let latestIndex = messages.count - 1
+                DispatchQueue.main.async {
+                    self.autoScrollTargetIndex = latestIndex
+                    self.shouldAutoScroll = true
+                    self.currentMessageIndex = -1 // Reset navigation state
                 }
             }
         }
+    }
+    
+    // MARK: - Turn Detection Logic
+    
+    private func buildConversationTurns(from messages: [ChatMessage]) {
+        var turns: [(bossIndex: Int, personaIndex: Int)] = []
+        
+        for i in 0..<messages.count - 1 {
+            let currentMessage = messages[i]
+            let nextMessage = messages[i + 1]
+            
+            // Look for Boss (User) → Persona (AI) pairs
+            if currentMessage.author == "User" && nextMessage.author == "AI" {
+                turns.append((bossIndex: i, personaIndex: i + 1))
+            }
+        }
+        
+        conversationTurns = turns
     }
     
     private func performSmoothScroll(direction: SmoothScrollDirection) {
@@ -140,7 +237,9 @@ class ScrollCoordinator: ObservableObject {
         
         // Initialize smooth scroll index if needed
         if smoothScrollIndex == -1 {
-            smoothScrollIndex = max(0, currentMessageIndex >= 0 ? currentMessageIndex : messageCount - 1)
+            DispatchQueue.main.async {
+                self.smoothScrollIndex = max(0, self.currentMessageIndex >= 0 ? self.currentMessageIndex : messageCount - 1)
+            }
         }
         
         let scrollStep = 2 // Approximately 2 messages = ~100pt

@@ -69,13 +69,11 @@ class PersonaRegistry: ObservableObject {
                 self.personas = discoveredPersonas
                 self.isLoaded = true
                 self.loadError = nil
-                print("✅ PersonaRegistry loaded \(discoveredPersonas.count) personas: \(discoveredPersonas.keys.sorted().joined(separator: ", "))")
             }
         } catch {
             DispatchQueue.main.async {
                 self.loadError = "Failed to load personas: \(error.localizedDescription)"
                 self.isLoaded = false
-                print("❌ PersonaRegistry failed to load: \(error)")
             }
         }
     }
@@ -102,7 +100,6 @@ class PersonaRegistry: ObservableObject {
             do {
                 let personaData = try parsePersonaFolder(folderName: folderName)
                 discoveredPersonas[personaData.id] = personaData
-                print("🔍 Loaded persona: \(personaData.id) (\(personaData.name)) - \(personaData.behaviorRules.count) characters omniscient context")
             } catch {
                 // Log error but continue processing other personas
                 print("❌ Error loading persona \(folderName): \(error)")
@@ -240,7 +237,7 @@ class PersonaRegistry: ObservableObject {
                 contextSections.append("")
             }
         } catch {
-            print("ℹ️ Boss folder not found or empty: \(bossPath)")
+            // Boss folder not found or empty
         }
         
         // 2. TOOLS CONTEXT - Available methodologies and tools
@@ -253,7 +250,7 @@ class PersonaRegistry: ObservableObject {
                 contextSections.append("")
             }
         } catch {
-            print("ℹ️ Tools folder not found or empty: \(toolsPath)")
+            // Tools folder not found or empty
         }
         
         // 3. JOURNAL CONTEXT - Complete conversation history (semantic memory)
@@ -266,7 +263,7 @@ class PersonaRegistry: ObservableObject {
                 contextSections.append("")
             }
         } catch {
-            print("ℹ️ Journal folder not found or empty: \(journalPath)")
+            // Journal folder not found or empty
         }
         
         // 4. PERSONA CONTEXT - Specific cognitive strategy

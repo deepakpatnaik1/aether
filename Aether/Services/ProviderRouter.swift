@@ -29,10 +29,30 @@ import Foundation
 class ProviderRouter {
     private let configuration: LLMConfiguration
     private let services: [String: any LLMServiceProtocol]
+    private var overridePrimaryModel: RoutingEntry?
     
     init(configuration: LLMConfiguration, services: [String: any LLMServiceProtocol]) {
         self.configuration = configuration
         self.services = services
+    }
+    
+    // MARK: - Model Switching
+    
+    /// Set primary model override for routing
+    func setPrimaryModel(provider: String, model: String) {
+        overridePrimaryModel = RoutingEntry(provider: provider, model: model)
+    }
+    
+    /// Get effective routing priority (with override if set)
+    private func getEffectiveRoutingPriority() -> [RoutingEntry] {
+        guard let override = overridePrimaryModel else {
+            return configuration.getRoutingPriority()
+        }
+        
+        // Put override first, then rest of configured routing
+        var priority = configuration.getRoutingPriority()
+        priority.removeAll { $0.provider == override.provider && $0.model == override.model }
+        return [override] + priority
     }
     
     // MARK: - Provider Resolution
@@ -68,14 +88,14 @@ class ProviderRouter {
         operation: (ResolvedProvider) async throws -> T
     ) async throws -> T {
         
-        guard let config = configuration.config else {
+        guard configuration.config != nil else {
             throw ProviderRoutingError.configurationNotLoaded
         }
         
         var lastError: Error?
         
-        // Try each provider in configured priority order
-        for routing in config.routing.priority {
+        // Try each provider in effective priority order (with override if set)
+        for routing in getEffectiveRoutingPriority() {
             do {
                 let resolvedProvider = try resolveProvider(routing)
                 let result = try await operation(resolvedProvider)
