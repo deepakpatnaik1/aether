@@ -147,7 +147,7 @@ struct ModelSwitcher: View {
     private func selectModel(_ model: String) {
         showDropdown = false
         messageStore.llmManager.switchModel(to: model)
-        messageStore.validatePersonaModelCompatibility()
+        _ = messageStore.validatePersonaModelCompatibility()
     }
 }
 

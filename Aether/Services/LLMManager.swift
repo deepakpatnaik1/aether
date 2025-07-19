@@ -76,7 +76,7 @@ class LLMManager: ObservableObject {
     
     /// Determines routing behavior for Claude Code integration
     private func parseSelectedModel(_ modelKey: String) -> String? {
-        let (provider, model) = parseModelKey(modelKey)
+        let (provider, _) = parseModelKey(modelKey)
         if provider == "claude-code" {
             return "claude-code"
         }
