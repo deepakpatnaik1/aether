@@ -2,26 +2,7 @@
 //  LLMManager.swift
 //  Aether
 //
-//  LLM provider routing coordinator for unified chat interface
-//
-//  BLUEPRINT SECTION: 🚨 Services - ModelRouter (Dynamic Provider Routing)
-//  =======================================================================
-//
-//  DESIGN PRINCIPLES:
-//  - No Hardcoding: All routing from LLMProviders.json configuration
-//  - Separation of Concerns: Routing logic separate from individual services
-//  - Modularity: Service discovery and provider coordination abstracted
-//  - No Redundancy: Common routing logic unified between streaming/non-streaming
-//
-//  RESPONSIBILITIES:
-//  - Coordinate requests across multiple LLM providers
-//  - Handle automatic fallback cascade based on external configuration
-//  - Manage service state and error handling
-//  - Provide unified interface for MessageStore
-//
-//  CURRENT SCOPE: Basic User ↔ AI routing
-//  - OpenAI primary, Fireworks fallback
-//  - Future: Will route different personas to different models
+//  Coordinates AI responses across multiple language model providers
 
 import Foundation
 
@@ -30,15 +11,12 @@ class LLMManager: ObservableObject {
     private lazy var services: [String: any LLMServiceProtocol] = createServices()
     private lazy var router: ProviderRouter = ProviderRouter(configuration: configuration, services: services)
     
-    // BLUEPRINT: Memory integration handled by OmniscientBundleBuilder
-    
     @Published var isLoading = false
     @Published var currentService = "None"
     @Published var errorMessage: String?
     @Published var currentModel: String = ""
     
     init() {
-        // Set initial current model from primary routing
         if let primaryRoute = configuration.getPrimaryRouting() {
             currentModel = getModelKey(provider: primaryRoute.provider, model: primaryRoute.model)
         }
@@ -46,13 +24,12 @@ class LLMManager: ObservableObject {
     
     // MARK: - Model Management
     
-    /// Get available models for UI display (only those with valid API keys)
+    /// Returns AI models available for user to select
     func getAvailableModels() -> [String] {
         guard let config = configuration.config else { return [] }
         
         var models: [String] = []
         for (providerKey, provider) in config.providers {
-            // Only include models from providers with valid API keys
             let apiKey = configuration.getApiKey(for: providerKey)
             guard !apiKey.isEmpty else { continue }
             
@@ -63,26 +40,22 @@ class LLMManager: ObservableObject {
         return models.sorted()
     }
     
-    /// Switch to a different model
+    /// Changes which AI model the user is talking to
     func switchModel(to modelKey: String) {
         let (provider, model) = parseModelKey(modelKey)
         
-        // Validate model exists
         guard configuration.getModel(provider: provider, model: model) != nil else {
             print("❌ Model not found: \(modelKey)")
             return
         }
         
-        // Update current model
         currentModel = modelKey
-        
-        // Update router to use new model as primary
         router.setPrimaryModel(provider: provider, model: model)
         
         print("✅ Switched to model: \(modelKey)")
     }
     
-    /// Get current model key
+    /// Returns which AI model the user is currently using
     func getCurrentModel() -> String {
         return currentModel
     }
@@ -101,18 +74,29 @@ class LLMManager: ObservableObject {
         return ("", "")
     }
     
+    /// Determines routing behavior for Claude Code integration
+    private func parseSelectedModel(_ modelKey: String) -> String? {
+        let (provider, model) = parseModelKey(modelKey)
+        if provider == "claude-code" {
+            return "claude-code"
+        }
+        return nil
+    }
+    
     // MARK: - Service Discovery
     
-    /// Create service instances based on configuration
+    /// Sets up connections to available AI providers
     private func createServices() -> [String: any LLMServiceProtocol] {
         var serviceMap: [String: any LLMServiceProtocol] = [:]
         
-        // Initialize services for configured providers
         if configuration.getProvider("fireworks") != nil {
             serviceMap["fireworks"] = FireworksService()
         }
         if configuration.getProvider("openai") != nil {
             serviceMap["openai"] = OpenAIService()
+        }
+        if configuration.getProvider("claude-code") != nil {
+            serviceMap["claude-code"] = ClaudeCodeService()
         }
         
         return serviceMap
@@ -120,17 +104,13 @@ class LLMManager: ObservableObject {
     
     // MARK: - Routing Coordination
     
-    /// Send message with automatic provider fallback (legacy, no persona)
-    /// BLUEPRINT: Eventually includes full vault context (omniscient memory scope)
-    /// CURRENT: Includes conversation history for continuity
+    /// Sends user message and returns AI response
     func sendMessage(_ message: String) async throws -> String {
-        // Use current persistent persona instead of hardcoded default
         let result = try await sendMessage(message, persona: getCurrentPersistentPersona())
         return result.mainResponse
     }
     
-    /// Send message with persona support and unified compression
-    /// BREAKTHROUGH: Persona applies machine compression to their own response
+    /// Sends message to specific AI persona and returns response with compressed summary
     func sendMessage(_ message: String, persona: String?) async throws -> (mainResponse: String, trimmedResponse: String?) {
         await updateLoadingState(isLoading: true)
         
@@ -140,40 +120,34 @@ class LLMManager: ObservableObject {
             }
         }
         
-        // Build persona-aware prompt
+        let actualPersona = persona ?? getCurrentPersistentPersona()
         let fullPrompt = try buildPersonaPrompt(persona: persona, userMessage: message)
         
-        // Get response from LLM
-        let rawResponse = try await router.executeWithFallback { resolvedProvider in
+        let rawResponse = try await router.executeWithPersonaRouting(
+            persona: actualPersona,
+            selectedModel: parseSelectedModel(currentModel)
+        ) { resolvedProvider in
             await updateCurrentService(provider: resolvedProvider.provider, model: resolvedProvider.model)
             return try await resolvedProvider.service.sendMessage(fullPrompt)
         }
         
-        // Parse persona response with machine compression
         return parsePersonaResponse(rawResponse)
     }
     
-    /// Build persona-aware prompt using unified omniscient bundle
-    /// ARCHITECTURE: Complete memory bundle with instructions header
+    /// Builds complete context including conversation history and persona instructions
     private func buildPersonaPrompt(persona: String?, userMessage: String) throws -> String {
-        // CRITICAL: Get current persistent persona instead of hardcoded fallback
         let actualPersona = persona ?? getCurrentPersistentPersona()
-        
-        // Use unified omniscient bundle builder
         let bundleBuilder = OmniscientBundleBuilder.shared
         
-        // Validate bundle can be assembled
         let validationIssues = bundleBuilder.validateBundle(for: actualPersona)
         if !validationIssues.isEmpty {
             print("⚠️ Bundle validation issues: \(validationIssues.joined(separator: ", "))")
         }
         
-        // Build complete omniscient bundle
         return try bundleBuilder.buildBundle(for: actualPersona, userMessage: userMessage)
     }
     
-    /// Get current persistent persona from vault (super-persistent across app restarts)
-    /// CRITICAL: Never defaults to hardcoded values - always reads from vault
+    /// Returns which persona the user was last talking to
     private func getCurrentPersistentPersona() -> String {
         let path = VaultConfig.currentPersonaPath
         
@@ -188,9 +162,7 @@ class LLMManager: ObservableObject {
             }
         }
         
-        // CRITICAL ERROR: currentPersona.md missing or corrupted
-        // Create default file with emergency fallback
-        let firstPersona = "samara" // Emergency fallback when PersonaRegistry not available
+        let firstPersona = "samara"
         do {
             try firstPersona.write(toFile: path, atomically: true, encoding: String.Encoding.utf8)
             print("🔧 Created missing currentPersona.md with: \(firstPersona)")
@@ -200,34 +172,28 @@ class LLMManager: ObservableObject {
         return firstPersona
     }
     
-    /// Parse persona response with 3-section format and process all sections
-    /// COMPLETE: Handles taxonomy analysis, main response, and machine trim with actions
+    /// Extracts main response and compressed summary from AI output
     private func parsePersonaResponse(_ rawResponse: String) -> (mainResponse: String, trimmedResponse: String?) {
         let taxonomyMarker = "---TAXONOMY_ANALYSIS---"
         let mainMarker = "---MAIN_RESPONSE---"
         let trimMarker = "---MACHINE_TRIM---"
         
-        // Extract all three sections
         let taxonomyAnalysis = extractSection(from: rawResponse, start: taxonomyMarker, end: mainMarker)
         let mainResponse = extractSection(from: rawResponse, start: mainMarker, end: trimMarker)
         let machineTrim = extractSection(from: rawResponse, start: trimMarker, end: nil)
         
-        // Process taxonomy analysis (if present)
         if let taxonomy = taxonomyAnalysis, !taxonomy.isEmpty {
             processTaxonomyAnalysis(taxonomy)
         }
         
-        // Validate main response
         guard let main = mainResponse, !main.isEmpty else {
-            // Fallback: treat entire response as main if no structure found
             return (rawResponse.trimmingCharacters(in: .whitespacesAndNewlines), nil)
         }
         
-        // Return main response and trim (if available)
         return (main, machineTrim)
     }
     
-    /// Extract section content between markers
+    /// Finds specific section within AI response
     private func extractSection(from response: String, start: String, end: String?) -> String? {
         guard let startRange = response.range(of: start)?.upperBound else {
             return nil
@@ -247,15 +213,13 @@ class LLMManager: ObservableObject {
         return content.isEmpty ? nil : content
     }
     
-    /// Process taxonomy analysis section - evolve taxonomy
+    /// Updates conversation categorization based on AI analysis
     private func processTaxonomyAnalysis(_ taxonomyContent: String) {
-        // Parse taxonomy metadata from the analysis
         guard let metadata = TaxonomyManager.shared.parseTrimMetadata(taxonomyContent) else {
             print("⚠️ Could not parse taxonomy from analysis section")
             return
         }
         
-        // Validate and add to taxonomy
         let validation = TaxonomyManager.shared.validateTopicHierarchy(metadata.topicHierarchy)
         if validation.isValid {
             TaxonomyManager.shared.addToTaxonomy(hierarchyString: metadata.topicHierarchy)
@@ -271,7 +235,7 @@ class LLMManager: ObservableObject {
     }
     
     
-    /// Stream message with automatic provider fallback
+    /// Returns AI response as it's being generated word by word
     func streamMessage(_ message: String) async throws -> AsyncStream<String> {
         await updateLoadingState(isLoading: true)
         
@@ -279,7 +243,6 @@ class LLMManager: ObservableObject {
             await updateCurrentService(provider: resolvedProvider.provider, model: resolvedProvider.model)
             let stream = try await resolvedProvider.service.streamMessage(message)
             
-            // Clean up loading state when stream completes
             Task {
                 for await _ in stream { }
                 await MainActor.run { self.isLoading = false }

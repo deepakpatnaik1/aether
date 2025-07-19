@@ -61,6 +61,27 @@
           "blueprint_note": "Powers Claude persona in 5-member AI team"
         }
       }
+    },
+    "claude-code": {
+      "name": "Claude Code",
+      "baseURL": "https://api.anthropic.com/v1",
+      "apiKeyEnvVar": "CLAUDE_CODE_API_KEY", 
+      "category": "development",
+      "models": {
+        "claude-code-sonnet": {
+          "id": "claude-3-5-sonnet-20241022",
+          "displayName": "Claude Code",
+          "maxTokens": 4000,
+          "temperature": 0.7,
+          "contextWindow": 200000,
+          "supportedFeatures": ["streaming", "coding", "development"],
+          "blueprint_note": "Dedicated Claude Code API for authentic Claude persona responses"
+        }
+      },
+      "specialBinding": {
+        "persona": "claude",
+        "exclusiveBinding": true
+      }
     }
   },
   

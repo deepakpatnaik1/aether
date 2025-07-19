@@ -2,34 +2,7 @@
 //  MessageStore.swift
 //  Aether
 //
-//  Observable message state manager for basic human-LLM chat interface
-//
-//  BLUEPRINT SECTION: 🚨 Core - Message Management
-//  ===============================================
-//
-//  DESIGN PRINCIPLES:
-//  - Separation of Concerns: Message state management only, no UI logic
-//  - Single Source of Truth: Shared conversation state across all UI components
-//  - No Hardcoding: Clean, maintainable message flow
-//  - Thread Safety: All UI updates on main thread via @MainActor
-//
-//  RESPONSIBILITIES:
-//  - Manage conversation message array state
-//  - Coordinate with LLM services for responses
-//  - Handle streaming message updates
-//  - Provide clean interface for UI components
-//
-//  CURRENT SCOPE: Complete memory-integrated chat interface with superjournal
-//  - Hardcoded "User" and "AI" authors (intentionally simple before persona system)
-//  - Full conversation persistence and Boss profile integration
-//  - Agentic superjournal auto-save for complete audit trail
-//  - Foundation for future persona system
-//
-//  ACHIEVEMENTS TODAY:
-//  ✅ Boss profile integration - AI knows who Boss is and his role
-//  ✅ Superjournal auto-save - Every turn automatically preserved
-//  ✅ Existing conversation migration - "What is outer space?" conversations preserved
-//  ✅ Enterprise-grade audit trail - Complete conversation logging system
+//  Manages conversation state and coordinates AI responses for the user
 
 import Foundation
 import SwiftUI
@@ -39,29 +12,29 @@ class MessageStore: ObservableObject {
     @Published var messages: [ChatMessage] = []
     let llmManager = LLMManager()
     
-    // BLUEPRINT: Memory integration for conversation persistence
+    // Preserves conversation history between app sessions
     private let memoryIndex = ContextMemoryIndex.shared
     
-    // BLUEPRINT: Vault writing integration for superjournal auto-save
+    // Automatically saves conversations for user review
     private let vaultWriter = VaultWriter.shared
     
-    // PERSONA SYSTEM: PersonaRegistry dependency for persona-aware message handling
+    // Manages available AI personas for the user to interact with
     @ObservedObject var personaRegistry: PersonaRegistry
     
     // Navigation events
     private let navigationSubject = PassthroughSubject<NavigationDirection, Never>()
     private var cancellables = Set<AnyCancellable>()
     
-    // Auto-save state tracking
+    // Tracks current message for automatic saving
     private var currentUserMessage: String?
     
-    // PERSONA SYSTEM: Current active persona tracking (super-persistent)
+    // Remembers which AI persona the user is currently talking to
     @Published private var currentPersona: String = ""
     
     init(personaRegistry: PersonaRegistry) {
         self.personaRegistry = personaRegistry
         
-        // BLUEPRINT: Load conversation history and current persona from vault on startup
+        // Restores previous conversation and persona when app starts
         Task { @MainActor in
             loadCurrentPersona()
             loadConversationHistory()
@@ -79,27 +52,26 @@ class MessageStore: ObservableObject {
     
     // MARK: - Message Coordination
     
-    /// Send user message with Boss-directed persona parsing
+    /// Processes user messages and generates AI responses
     func sendMessage(_ content: String) {
-        // Parse first word to detect persona targeting
+        // Check if user is addressing a specific AI persona
         let (targetPersona, messageContent) = parsePersonaFromMessage(content)
         
-        // If persona found, set as current active
+        // Switch to the specified persona if mentioned
         if let persona = targetPersona {
             Task { @MainActor in
                 setCurrentPersona(persona)
             }
         }
         
-        // Add Boss's message first
+        // Add user's message to conversation
         Task { @MainActor in
-            addUserMessage(content) // Always save full original message
+            addUserMessage(content)
         }
         
-        // Check for write commands first
+        // Handle special commands like file operations
         if let writeResult = VaultWriter.shared.processCommand(messageContent) {
             if writeResult == "CLEAR_SCROLLBACK_COMMAND" {
-                // Handle scrollback clearing
                 Task { @MainActor in
                     clearMessages()
                     addAIMessage("🧹 Scrollback cleared - conversation reset to zero messages", persona: getCurrentPersona())
@@ -110,27 +82,33 @@ class MessageStore: ObservableObject {
                 }
             }
         } else {
-            // Route to current active persona with cleaned content
-            coordinateLLMResponse(for: messageContent, persona: getCurrentPersona())
+            // Send message to AI for response
+            coordinateLLMResponse(for: messageContent, persona: getEffectivePersona())
         }
     }
     
-    /// Get current persona for UI state
+    /// Returns which AI persona the user is currently talking to
     func getCurrentPersona() -> String {
         return currentPersona
     }
     
-    /// Set current active persona (super-persistent)
+    /// Changes which AI persona the user is talking to
     func setCurrentPersona(_ persona: String) {
         guard personaRegistry.personaExists(persona) else {
             return
         }
         currentPersona = persona
         saveCurrentPersona()
+        
+        // Automatically use Claude Code API when talking to Claude persona
+        if persona.lowercased() == "claude" {
+            Task { @MainActor in
+                switchToClaudeCodeModel()
+            }
+        }
     }
     
-    /// Parse first word of message to detect persona targeting
-    /// Returns (targetPersona, cleanedContent) - persona is nil if no match found
+    /// Checks if user mentioned a persona name to switch to that AI
     private func parsePersonaFromMessage(_ content: String) -> (String?, String) {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = trimmed.components(separatedBy: .whitespaces)
@@ -139,22 +117,19 @@ class MessageStore: ObservableObject {
             return (nil, content)
         }
         
-        // Check if first word matches any persona (case-insensitive, strip punctuation)
         let cleanedFirstWord = firstWord.trimmingCharacters(in: .punctuationCharacters).lowercased()
         for personaId in personaRegistry.allPersonaIds() {
             if personaId.lowercased() == cleanedFirstWord {
-                // Found persona match - remove first word from content
                 let remainingWords = Array(words.dropFirst())
                 let cleanedContent = remainingWords.joined(separator: " ")
                 return (personaId, cleanedContent)
             }
         }
         
-        // No persona match - return original content
         return (nil, content)
     }
     
-    /// Clear all messages from conversation
+    /// Clears all messages from the conversation view
     func clearMessages() {
         Task { @MainActor in
             messages.removeAll()
@@ -163,25 +138,24 @@ class MessageStore: ObservableObject {
     
     // MARK: - Message State Management
     
-    /// Add user message to conversation
+    /// Adds user's message to the conversation
     @MainActor
     private func addUserMessage(_ content: String) {
-        let message = ChatMessage(content: content, author: "User", persona: nil) // Boss messages have no persona
+        let message = ChatMessage(content: content, author: "User", persona: nil)
         messages.append(message)
         saveConversationHistory()
         
-        // BLUEPRINT: Track user message for superjournal auto-save
         currentUserMessage = content
     }
     
-    /// Add AI message to conversation (for error handling and write commands)
+    /// Adds AI response to the conversation
     @MainActor
     private func addAIMessage(_ content: String, persona: String? = nil) {
         let message = ChatMessage(content: content, author: "AI", persona: persona)
         messages.append(message)
     }
     
-    /// Create empty AI message for streaming updates
+    /// Creates placeholder for AI response while it's being generated
     @MainActor
     private func startAIMessage(persona: String? = nil) -> UUID {
         let message = ChatMessage(content: "", author: "AI", persona: persona)
@@ -190,7 +164,7 @@ class MessageStore: ObservableObject {
         return messageId
     }
     
-    /// Update streaming message content while preserving metadata
+    /// Updates AI message as response is being generated
     @MainActor
     private func updateStreamingMessage(id: UUID, content: String) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
@@ -356,35 +330,59 @@ class MessageStore: ObservableObject {
         }
     }
     
-    /// Load conversation history from memory for scrollback display
-    /// BLUEPRINT: Eventually loads full omniscient memory context
-    /// CURRENT: Loads conversation state for UI display (separate from superjournal backup)
+    /// Restores conversation when user reopens the app
     @MainActor
     private func loadConversationHistory() {
         let savedMessages = memoryIndex.getConversationHistory()
         messages = savedMessages
     }
     
-    /// Save conversation history to memory for scrollback persistence
-    /// BLUEPRINT: Eventually triggers semantic consolidation when memory grows large
-    /// CURRENT: Simple persistence after each message (separate from superjournal backup)
+    /// Saves conversation so it persists when user closes the app
     private func saveConversationHistory() {
         memoryIndex.saveConversationHistory(messages)
     }
     
-    // MARK: - Superjournal Auto-Save (Blueprint Implementation)
-    // 🎉 ACHIEVEMENT: Agentic superjournal system - no manual intervention required
+    // MARK: - Conversation Archiving
     
-    /// Auto-save complete conversation turn to superjournal
-    /// BLUEPRINT: "FullTurn-YYYY-MM-DD-HHMM.md — Complete uncompressed logs"
-    /// ACHIEVEMENT: ✅ Fully automated - triggers when AI response completes
-    /// INTEGRATION: Clean separation - MessageStore detects turns, VaultWriter handles files
+    /// Automatically saves complete conversations for user review
     private func autoSaveCompleteTurn(userMessage: String, aiResponse: String, persona: String?) {
         Task {
             vaultWriter.autoSaveTurn(userMessage: userMessage, aiResponse: aiResponse, persona: persona ?? getCurrentPersona())
         }
     }
     
+    // MARK: - Claude Integration
+    
+    /// Automatically switches to Claude Code API when user talks to Claude
+    @MainActor
+    private func switchToClaudeCodeModel() {
+        let claudeCodeModelKey = "claude-code:claude-code-sonnet"
+        llmManager.switchModel(to: claudeCodeModelKey)
+    }
+    
+    /// Ensures Claude Code model only works with Claude persona
+    func validatePersonaModelCompatibility() -> Bool {
+        let currentModel = llmManager.getCurrentModel()
+        
+        if currentModel.contains("claude-code") && currentPersona.lowercased() != "claude" {
+            Task { @MainActor in
+                setCurrentPersona("claude")
+            }
+        }
+        
+        return true
+    }
+    
+    /// Returns which persona should respond based on current model selection
+    func getEffectivePersona() -> String {
+        let currentModel = llmManager.getCurrentModel()
+        
+        if currentModel.contains("claude-code") {
+            return "claude"
+        }
+        
+        return currentPersona
+    }
     
 }
 

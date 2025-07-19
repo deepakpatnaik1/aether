@@ -2,32 +2,28 @@
 //  InputBarView.swift
 //  Aether
 //
-//  Text input area where user types messages to AI personas
+//  Clean glassmorphic input bar focused on UI presentation
+//
+//  BLUEPRINT SECTION: 🚨 UI - InputBarView
+//  =====================================
+//
+//  DESIGN PRINCIPLES:
+//  - Separation of Concerns: Pure UI component, business logic in services
+//  - Single Responsibility: Handles only input presentation and user interaction
+//  - Service Integration: Uses FocusManager and TextMeasurementService
+//
+//  RESPONSIBILITIES:
+//  - Render glassmorphic input interface
+//  - Handle user text input events
+//  - Coordinate with focus and measurement services
+//  - Provide clean input experience
 
 import SwiftUI
 import Combine
-import Foundation
 
-struct AttachmentPreview {
-    let id = UUID()
-    let url: URL
-    let name: String
-    let size: Int64
-    let type: AttachmentType
-    
-    enum AttachmentType {
-        case image
-        case pdf
-        case text
-        case other
-    }
-}
-
-struct InputBarView: View {
+struct InputBarView_BACKUP: View {
     @State private var inputText: String = ""
     @State private var textHeight: CGFloat
-    @State private var attachments: [AttachmentPreview] = []
-    @State private var showingFilePicker = false
     @FocusState private var isInputFocused: Bool
     @EnvironmentObject var messageStore: MessageStore
     @EnvironmentObject var focusManager: FocusManager
@@ -35,24 +31,24 @@ struct InputBarView: View {
     private let tokens = DesignTokens.shared
     
     init() {
+        // Calculate the actual single-line height to match what updateTextHeight() produces
         let font = NSFont(name: DesignTokens.shared.typography.bodyFont, size: 12) ?? NSFont.systemFont(ofSize: 12)
         let lineHeight = font.ascender + abs(font.descender) + font.leading
+        // Use just the line height since padding is applied by the view layout
         let singleLineTextHeight = lineHeight
         _textHeight = State(initialValue: singleLineTextHeight)
     }
     
     var body: some View {
+        // Input Container - Glassmorphic design with upward growth
         VStack(spacing: 0) {
-            if !attachments.isEmpty {
-                attachmentPreviewSection()
-            }
-            
+            // Expandable text area - grows upward by putting controls first
             ZStack(alignment: .bottomLeading) {
-                TextEditor(text: $inputText)
+                TextField("", text: $inputText, axis: .vertical)
                     .font(.custom(tokens.typography.bodyFont, size: 12))
                     .foregroundColor(.white)
                     .focused($isInputFocused)
-                    .scrollContentBackground(.hidden)
+                    .textFieldStyle(PlainTextFieldStyle())
                     .frame(height: textHeight)
                     .padding(.horizontal, tokens.elements.inputBar.textPadding)
                     .padding(.top, tokens.elements.inputBar.topPadding)
@@ -69,9 +65,11 @@ struct InputBarView: View {
                 handleTextChange(oldValue: oldValue, newValue: newValue)
             }
             
+            // Bottom controls row
             HStack(spacing: tokens.elements.inputBar.controlsSpacing) {
+                // Plus button
                 Button(action: {
-                    showingFilePicker = true
+                    // TODO: Add attachment functionality
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 14, weight: .medium))
@@ -80,10 +78,12 @@ struct InputBarView: View {
                 }
                 .buttonStyle(PlainButtonStyle())
                 
+                // Model switcher
                 ModelSwitcher()
                 
                 Spacer()
                 
+                // Send button
                 if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: {
                         sendMessage()
@@ -95,6 +95,7 @@ struct InputBarView: View {
                     .buttonStyle(PlainButtonStyle())
                 }
                 
+                // Green indicator
                 Circle()
                     .fill(Color.green)
                     .frame(width: tokens.elements.buttons.indicatorSize, height: tokens.elements.buttons.indicatorSize)
@@ -147,17 +148,9 @@ struct InputBarView: View {
                 focusManager.clearFocusRequest()
             }
         }
-        .fileImporter(
-            isPresented: $showingFilePicker,
-            allowedContentTypes: [.image, .pdf, .plainText, .item],
-            allowsMultipleSelection: true
-        ) { result in
-            handleFilePickerResult(result)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .addScreenshotAttachment)) { notification in
-            handleScreenshotNotification(notification)
-        }
     }
+    
+    // Input bar grows upward while maintaining bottom alignment
     
     private func sendMessage() {
         guard !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -268,10 +261,9 @@ struct InputBarView: View {
         let containerPadding: CGFloat = tokens.elements.inputBar.padding // Container padding (all sides)
         let controlsRowHeight: CGFloat = 32 // Bottom controls row height
         let textInternalPadding: CGFloat = tokens.elements.inputBar.topPadding + tokens.elements.inputBar.topPadding // Text area internal padding (top + bottom)
-        let attachmentHeight: CGFloat = attachments.isEmpty ? 0 : 81 // Attachment preview area height (80 + 1 for divider)
         
-        // Total chrome: title bar + container padding (top/bottom) + text internal padding + controls row + attachments
-        let totalChrome = titleBarHeight + (containerPadding * 2) + textInternalPadding + controlsRowHeight + attachmentHeight
+        // Total chrome: title bar + container padding (top/bottom) + text internal padding + controls row
+        let totalChrome = titleBarHeight + (containerPadding * 2) + textInternalPadding + controlsRowHeight
         
         // Available height for text area to achieve perfect vertical symmetry
         let availableTextHeight = windowHeight - totalChrome
@@ -282,163 +274,11 @@ struct InputBarView: View {
         print("  - Container padding (top/bottom): \(containerPadding * 2)")
         print("  - Text internal padding: \(textInternalPadding)")
         print("  - Controls row height: \(controlsRowHeight)")
-        print("  - Attachment height: \(attachmentHeight)")
         print("  - Total chrome: \(totalChrome)")
         print("  - Available text height: \(availableTextHeight)")
         print("  - Final max height: \(max(200, availableTextHeight))")
         
         // Maximum text area height that achieves perfect vertical symmetry
         return max(200, availableTextHeight)
-    }
-    
-    // MARK: - Attachment Preview Section
-    
-    @ViewBuilder
-    private func attachmentPreviewSection() -> some View {
-        VStack(spacing: 0) {
-            // Attachment preview area with glassmorphic styling
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(attachments, id: \.id) { attachment in
-                        attachmentPreviewItem(attachment)
-                    }
-                }
-                .padding(.horizontal, tokens.elements.inputBar.textPadding)
-                .padding(.vertical, 8)
-            }
-            .frame(height: 80)
-            
-            // Divider line
-            Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(height: 1)
-                .padding(.horizontal, tokens.elements.inputBar.textPadding)
-        }
-    }
-    
-    @ViewBuilder
-    private func attachmentPreviewItem(_ attachment: AttachmentPreview) -> some View {
-        VStack(spacing: 4) {
-            // File preview thumbnail
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.1))
-                .frame(width: 60, height: 45)
-                .overlay(
-                    Group {
-                        switch attachment.type {
-                        case .image:
-                            AsyncImage(url: attachment.url) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } placeholder: {
-                                Image(systemName: "photo")
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        case .pdf:
-                            Image(systemName: "doc.pdf")
-                                .foregroundColor(.white.opacity(0.8))
-                        case .text:
-                            Image(systemName: "doc.text")
-                                .foregroundColor(.white.opacity(0.8))
-                        case .other:
-                            Image(systemName: "doc")
-                                .foregroundColor(.white.opacity(0.8))
-                        }
-                    }
-                )
-                .overlay(
-                    // Remove button
-                    Button(action: {
-                        removeAttachment(attachment)
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.white)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .frame(width: 16, height: 16)
-                    .offset(x: 8, y: -8),
-                    alignment: .topTrailing
-                )
-            
-            // File name
-            Text(attachment.name)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
-                .lineLimit(1)
-                .frame(width: 60)
-        }
-    }
-    
-    private func removeAttachment(_ attachment: AttachmentPreview) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            attachments.removeAll { $0.id == attachment.id }
-        }
-    }
-    
-    private func handleFilePickerResult(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            withAnimation(.easeInOut(duration: 0.3)) {
-                for url in urls {
-                    let attachment = createAttachmentPreview(from: url)
-                    attachments.append(attachment)
-                }
-            }
-        case .failure(let error):
-            print("❌ File picker error: \(error.localizedDescription)")
-        }
-    }
-    
-    private func createAttachmentPreview(from url: URL) -> AttachmentPreview {
-        let name = url.lastPathComponent
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        
-        let pathExtension = url.pathExtension.lowercased()
-        let type: AttachmentPreview.AttachmentType
-        
-        switch pathExtension {
-        case "jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp":
-            type = .image
-        case "pdf":
-            type = .pdf
-        case "txt", "md", "swift", "py", "js", "html", "css", "json", "xml":
-            type = .text
-        default:
-            type = .other
-        }
-        
-        return AttachmentPreview(
-            url: url,
-            name: name,
-            size: Int64(size),
-            type: type
-        )
-    }
-    
-    private func handleScreenshotNotification(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let imageURL = userInfo["imageURL"] as? URL else {
-            print("❌ Invalid screenshot notification")
-            return
-        }
-        
-        print("📸 Received screenshot notification: \(imageURL)")
-        
-        // Create attachment preview for screenshot
-        let attachment = createAttachmentPreview(from: imageURL)
-        
-        // Add to attachments with animation
-        withAnimation(.easeInOut(duration: 0.3)) {
-            attachments.append(attachment)
-        }
-        
-        // Focus the input bar
-        isInputFocused = true
-        
-        print("✅ Screenshot added to attachments")
     }
 }

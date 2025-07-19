@@ -2,27 +2,7 @@
 //  ProviderRouter.swift
 //  Aether
 //
-//  LLM provider routing and fallback coordination
-//
-//  BLUEPRINT SECTION: 🚨 Services - ModelRouter (Provider Routing Logic)
-//  =====================================================================
-//
-//  DESIGN PRINCIPLES:
-//  - Separation of Concerns: Pure routing logic, no state management or UI concerns
-//  - No Hardcoding: All routing decisions based on external LLMProviders.json
-//  - Modularity: Clean, testable routing that can be used by any coordinator
-//  - No Redundancy: Single source of truth for provider fallback logic
-//
-//  RESPONSIBILITIES:
-//  - Resolve provider configurations from routing entries
-//  - Validate provider availability and API keys
-//  - Execute provider fallback cascade based on external configuration
-//  - Provide service health checking for UI indicators
-//
-//  USAGE:
-//  - LLMManager uses for coordinating provider requests
-//  - Future: PersonaRegistry will use for persona-specific routing
-//  - Future: Slash commands will use for runtime model switching
+//  Routes AI requests to different providers with automatic fallback
 
 import Foundation
 
@@ -81,7 +61,37 @@ class ProviderRouter {
         )
     }
     
-    // MARK: - Routing Execution
+    // MARK: - Claude Code Special Routing
+    
+    /// Execute operation with Claude Code special routing logic
+    func executeWithPersonaRouting<T>(
+        persona: String,
+        selectedModel: String?,
+        operation: (ResolvedProvider) async throws -> T
+    ) async throws -> T {
+        
+        // BIDIRECTIONAL BINDING RULE 1: Claude persona always uses Claude Code
+        if persona.lowercased() == "claude" {
+            let claudeCodeRouting = RoutingEntry(provider: "claude-code", model: "claude-code-sonnet")
+            let resolvedProvider = try resolveProvider(claudeCodeRouting)
+            return try await operation(resolvedProvider)
+        }
+        
+        // BIDIRECTIONAL BINDING RULE 2: Claude Code model only allows Claude persona
+        if selectedModel == "claude-code" && persona.lowercased() != "claude" {
+            throw ProviderRoutingError.personaModelMismatch("Claude Code model can only be used with Claude persona")
+        }
+        
+        // BIDIRECTIONAL BINDING RULE 3: Auto-select Claude Code when Claude summoned
+        if selectedModel == "claude-code" {
+            let claudeCodeRouting = RoutingEntry(provider: "claude-code", model: "claude-code-sonnet")
+            let resolvedProvider = try resolveProvider(claudeCodeRouting)
+            return try await operation(resolvedProvider)
+        }
+        
+        // Standard routing for all other personas
+        return try await executeWithFallback(operation: operation)
+    }
     
     /// Execute operation with automatic provider fallback
     func executeWithFallback<T>(
@@ -233,6 +243,7 @@ enum ProviderRoutingError: Error, LocalizedError {
     case configurationMissing(String)
     case apiKeyMissing(String)
     case allProvidersFailed(Error?)
+    case personaModelMismatch(String)
     
     var errorDescription: String? {
         switch self {
@@ -250,6 +261,8 @@ enum ProviderRoutingError: Error, LocalizedError {
             } else {
                 return "All configured LLM services failed"
             }
+        case .personaModelMismatch(let message):
+            return message
         }
     }
 }

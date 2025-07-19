@@ -1,12 +1,12 @@
 //
-//  FireworksService.swift
+//  ClaudeCodeService.swift
 //  Aether
 //
-//  Connects to Fireworks AI for high-context language model responses
+//  Connects to Claude Code API for authentic Claude persona responses
 
 import Foundation
 
-class FireworksService: ObservableObject, LLMServiceProtocol {
+class ClaudeCodeService: ObservableObject, LLMServiceProtocol {
     private let configuration = LLMConfiguration()
     
     @Published var isLoading = false
@@ -14,10 +14,10 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
     
     // MARK: - Configuration
     
-    /// Get Fireworks provider and model configuration
+    /// Get Claude Code provider and model configuration
     private func getProviderConfig() -> (provider: LLMProvider, model: LLMModel)? {
-        guard let provider = configuration.getProvider("fireworks"),
-              let model = configuration.getModel(provider: "fireworks", model: "llama-maverick") else {
+        guard let provider = configuration.getProvider("claude-code"),
+              let model = configuration.getModel(provider: "claude-code", model: "claude-code-sonnet") else {
             return nil
         }
         return (provider, model)
@@ -26,12 +26,12 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
     /// Validate API key availability
     private func validateConfiguration() throws -> (LLMProvider, LLMModel, String) {
         guard let (provider, model) = getProviderConfig() else {
-            throw LLMServiceError.missingAPIKey("Fireworks configuration not loaded")
+            throw LLMServiceError.missingAPIKey("Claude Code configuration not loaded")
         }
         
-        let apiKey = configuration.getApiKey(for: "fireworks")
+        let apiKey = configuration.getApiKey(for: "claude-code")
         guard !apiKey.isEmpty else {
-            throw LLMServiceError.missingAPIKey("Fireworks API key not configured")
+            throw LLMServiceError.missingAPIKey("Claude Code API key not configured")
         }
         
         return (provider, model, apiKey)
@@ -39,7 +39,7 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
     
     // MARK: - Request Building
     
-    /// Build HTTP request for Fireworks API using shared infrastructure
+    /// Build HTTP request for Claude Code API using shared infrastructure
     private func buildRequest(provider: LLMProvider, model: LLMModel, apiKey: String, message: String, streaming: Bool = false) throws -> URLRequest {
         return try HTTPRequestBuilder.buildChatCompletionRequest(
             baseURL: provider.baseURL,
@@ -52,7 +52,7 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
     
     // MARK: - LLMServiceProtocol Implementation
     
-    /// Send message to Fireworks API and return complete response
+    /// Send message to Claude Code API and return complete response
     func sendMessage(_ message: String) async throws -> String {
         let (provider, model, apiKey) = try validateConfiguration()
         
@@ -74,7 +74,7 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
         return try LLMResponseParser.parseCompletionResponse(data)
     }
     
-    /// Stream message response from Fireworks API (infrastructure ready, currently disabled)
+    /// Stream message response from Claude Code API
     func streamMessage(_ message: String) async throws -> AsyncStream<String> {
         let (provider, model, apiKey) = try validateConfiguration()
         
@@ -107,31 +107,6 @@ class FireworksService: ObservableObject, LLMServiceProtocol {
                     isLoading = false
                 }
             }
-        }
-    }
-}
-
-// MARK: - Service Error Types
-
-enum LLMServiceError: Error {
-    case missingAPIKey(String)
-    case invalidResponse
-    case httpError(Int)
-    case requestError(Error)
-    case parsingError(Error)
-    
-    var localizedDescription: String {
-        switch self {
-        case .missingAPIKey(let message):
-            return message
-        case .invalidResponse:
-            return "Invalid response from LLM service"
-        case .httpError(let code):
-            return "HTTP error: \(code)"
-        case .requestError(let error):
-            return "Request error: \(error.localizedDescription)"
-        case .parsingError(let error):
-            return "Parsing error: \(error.localizedDescription)"
         }
     }
 }

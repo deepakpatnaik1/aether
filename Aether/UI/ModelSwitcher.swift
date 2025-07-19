@@ -2,20 +2,7 @@
 //  ModelSwitcher.swift
 //  Aether
 //
-//  LLM model selection dropdown for input bar
-//
-//  BLUEPRINT SECTION: 🚨 UI - ModelSwitcher
-//  ========================================
-//
-//  DESIGN PRINCIPLES:
-//  - Clean dropdown interface for model selection
-//  - Noir aesthetic matching input bar styling
-//  - Minimal footprint in controls row
-//
-//  RESPONSIBILITIES:
-//  - Display current active model name
-//  - Provide dropdown with available models
-//  - Handle model switching via MessageStore
+//  Dropdown menu for user to select which AI model to use
 //
 
 import SwiftUI
@@ -26,7 +13,6 @@ struct ModelSwitcher: View {
     
     private let tokens = DesignTokens.shared
     
-    // Get available models from LLMManager
     private var availableModels: [String] {
         let models = messageStore.llmManager.getAvailableModels()
         return models
@@ -37,7 +23,6 @@ struct ModelSwitcher: View {
         
         return content
             .onTapGesture {
-                // Close dropdown when tapping outside
                 if showDropdown {
                     showDropdown = false
                 }
@@ -148,7 +133,10 @@ struct ModelSwitcher: View {
     }
     
     private func getModelDisplayName(_ model: String) -> String {
-        // Remove provider prefix for display (openai:gpt-4.1-mini -> gpt-4.1-mini)
+        if model.contains("claude-code") {
+            return "Claude Code"
+        }
+        
         let parts = model.split(separator: ":")
         if parts.count == 2 {
             return String(parts[1]).lowercased()
@@ -159,6 +147,7 @@ struct ModelSwitcher: View {
     private func selectModel(_ model: String) {
         showDropdown = false
         messageStore.llmManager.switchModel(to: model)
+        messageStore.validatePersonaModelCompatibility()
     }
 }
 
