@@ -81,14 +81,18 @@ class MessageStore: ObservableObject {
     
     /// Send user message with Boss-directed persona parsing
     func sendMessage(_ content: String) {
+        print("🔴 PERSONA_DEBUG: sendMessage called with content: '\(content)'")
+        
         // Parse first word to detect persona targeting
         let (targetPersona, messageContent) = parsePersonaFromMessage(content)
+        print("🔴 PERSONA_DEBUG: parsePersonaFromMessage returned targetPersona: \(targetPersona ?? "nil"), messageContent: '\(messageContent)'")
         
-        // If persona found, set as current active
+        // If persona found, set as current active (synchronously since we're already on main thread)
         if let persona = targetPersona {
-            Task { @MainActor in
-                setCurrentPersona(persona)
-            }
+            print("🔴 PERSONA_DEBUG: Setting current persona to: \(persona)")
+            setCurrentPersona(persona)
+        } else {
+            print("🔴 PERSONA_DEBUG: No persona found, keeping current persona: \(getCurrentPersona())")
         }
         
         // Add Boss's message first
@@ -111,21 +115,31 @@ class MessageStore: ObservableObject {
             }
         } else {
             // Route to current active persona with cleaned content
-            coordinateLLMResponse(for: messageContent, persona: getCurrentPersona())
+            let finalPersona = getCurrentPersona()
+            print("🔴 PERSONA_DEBUG: Routing to LLM with persona: \(finalPersona), messageContent: '\(messageContent)'")
+            coordinateLLMResponse(for: messageContent, persona: finalPersona)
         }
     }
     
     /// Get current persona for UI state
     func getCurrentPersona() -> String {
+        print("🔴 PERSONA_DEBUG: getCurrentPersona() returning: \(currentPersona)")
         return currentPersona
     }
     
     /// Set current active persona (super-persistent)
     func setCurrentPersona(_ persona: String) {
+        print("🔴 PERSONA_DEBUG: setCurrentPersona called with: \(persona)")
+        
         guard personaRegistry.personaExists(persona) else {
+            print("🔴 PERSONA_ERROR: Persona '\(persona)' does not exist in registry!")
             return
         }
+        
+        let oldPersona = currentPersona
         currentPersona = persona
+        print("🔴 PERSONA_DEBUG: Persona changed from '\(oldPersona)' to '\(currentPersona)'")
+        
         saveCurrentPersona()
     }
     
@@ -217,13 +231,18 @@ class MessageStore: ObservableObject {
     
     /// Handle LLM response coordination with persona applying machine compression
     private func coordinateLLMResponse(for userMessage: String, persona: String? = nil) {
+        print("🔴 PERSONA_DEBUG: coordinateLLMResponse called with userMessage: '\(userMessage)', persona: \(persona ?? "nil")")
+        
         Task {
             do {
                 // Start empty AI message for response
                 let messageId = await MainActor.run { startAIMessage(persona: persona) }
+                print("🔴 PERSONA_DEBUG: Created AI message with ID: \(messageId), persona: \(persona ?? "nil")")
                 
                 // Get LLM response with persona applying machine compression
+                print("🔴 PERSONA_DEBUG: Calling llmManager.sendMessage...")
                 let personaResponse = try await llmManager.sendMessage(userMessage, persona: persona)
+                print("🔴 PERSONA_DEBUG: LLM response received successfully")
                 
                 // Update with main response
                 await MainActor.run { updateStreamingMessage(id: messageId, content: personaResponse.mainResponse) }
@@ -238,6 +257,7 @@ class MessageStore: ObservableObject {
                 
             } catch {
                 // Handle LLM errors gracefully
+        print("🔴 PERSONA_ERROR: LLM error occurred: \(error)")
                 await MainActor.run { handleLLMError(error, persona: persona) }
             }
         }
@@ -279,9 +299,12 @@ class MessageStore: ObservableObject {
     /// Handle LLM service errors with user-friendly messages
     @MainActor
     private func handleLLMError(_ error: Error, persona: String? = nil) {
+        print("🔴 PERSONA_ERROR: handleLLMError called with error: \(error), persona: \(persona ?? "nil")")
+        
         let errorMessage: String
         
         if let llmError = error as? LLMServiceError {
+            print("🔴 PERSONA_ERROR: Error is LLMServiceError: \(llmError)")
             switch llmError {
             case .missingAPIKey(let details):
                 errorMessage = "Configuration error: \(details)"
@@ -295,9 +318,11 @@ class MessageStore: ObservableObject {
                 errorMessage = "Parsing error: \(underlyingError.localizedDescription)"
             }
         } else {
+            print("🔴 PERSONA_ERROR: Error is NOT LLMServiceError, using generic message")
             errorMessage = "An unexpected error occurred. Please try again."
         }
         
+        print("🔴 PERSONA_ERROR: Adding AI error message: '\(errorMessage)' with persona: \(persona ?? "nil")")
         addAIMessage(errorMessage, persona: persona)
     }
     
